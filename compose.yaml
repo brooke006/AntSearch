@@ -1,0 +1,52 @@
+# Local dev stack: Redis, the coordinator stub and two workers.
+#   docker compose up --build
+
+x-worker: &worker
+  build: .
+  command: ["python", "-m", "antsearch.worker"]
+  depends_on:
+    coordinator:
+      condition: service_healthy
+
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 2s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
+
+  coordinator:
+    build: .
+    command: ["python", "-m", "antsearch.coordinator"]
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      COORDINATOR_HOST: 0.0.0.0
+      COORDINATOR_PORT: "8000"
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 2s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
+
+  worker-1:
+    <<: *worker
+    environment:
+      COORDINATOR_URL: http://coordinator:8000
+      WORKER_ID: worker-1
+
+  worker-2:
+    <<: *worker
+    environment:
+      COORDINATOR_URL: http://coordinator:8000
+      WORKER_ID: worker-2
