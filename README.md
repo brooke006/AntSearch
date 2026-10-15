@@ -55,7 +55,18 @@ Press Ctrl+C to stop, or run `docker compose down` from another terminal. After 
 python -m antsearch.pipeline
 ```
 
-It logs the recovered period and its error against the known one, writes `output/folded_transit.png`, and exits with status 1 if the error is over 1%. To try another star, pass `--target`, `--known-period` and `--sector`, e.g. `--target "Pi Men" --known-period 6.2678 --sector 1`. Run with `--help` for the other options.
+It logs the recovered period and its error against the known one and writes `output/folded_transit.png`. The exit status says how it went:
+
+| Status | Meaning |
+|---|---|
+| 0 | Period recovered within 1% |
+| 1 | Period recovered, but more than 1% off |
+| 3 | No matching data on MAST, or the star name can't be resolved. Retrying won't help. |
+| 4 | Download failed on every attempt (MAST unreachable or erroring). Try again later. |
+
+Network and MAST errors are retried 3 times by default (`--attempts`), waiting 2 s and then 4 s. If a cached download is corrupt, usually because an earlier download was cut off, it's deleted and downloaded again. Lightkurve caches files under `~/.cache/lightkurve`.
+
+To try another star, pass `--target`, `--known-period` and `--sector`, e.g. `--target "Pi Men" --known-period 6.2678 --sector 1`. Run with `--help` for the other options.
 
 It flattens twice: the first BLS pass finds the transits, then the light curve is re-flattened with them masked so the detrending filter doesn't eat the dip.
 
