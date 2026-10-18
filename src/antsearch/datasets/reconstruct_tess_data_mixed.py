@@ -28,6 +28,7 @@ raw_csv["tfopwg_disp"] = raw_csv["tfopwg_disp"].mask((raw_csv["tfopwg_disp"] == 
 
 raw_csv["tfopwg_disp"] = raw_csv["tfopwg_disp"].astype(bool)
 
+# Counts the number of sectors the object was observed in using "lightkurve". This function is adapted from code from Daniel Trimble.
 def count_sectors(tic_id):
 	return len(lk.search_lightcurve(f"TIC {tic_id}", mission = "TESS", author = "SPOC", exptime = 120))
 
