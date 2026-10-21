@@ -1,6 +1,8 @@
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.science
+
 lk = pytest.importorskip("lightkurve")
 import requests
 
