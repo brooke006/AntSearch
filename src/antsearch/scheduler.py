@@ -1,7 +1,7 @@
-"""Common scheduler interface and a round-robin baseline.
+"""Scheduler class and a round-robin version.
 
-The caller supplies available worker IDs in a stable order. The coordinator
-still owns task storage, worker health, and sending tasks to workers.
+Pass in the available worker IDs in the same order each time.
+The coordinator handles the tasks and checks which workers are online.
 """
 
 from abc import ABC, abstractmethod
@@ -16,21 +16,21 @@ class Scheduler(ABC):
 
     @abstractmethod
     def on_result(self, worker_id: str, result: Mapping[str, Any]) -> None:
-        """Receive a completed worker result for scheduler feedback."""
+        """Receive a worker's result after it finishes a task."""
 
 
 class RoundRobinScheduler(Scheduler):
-    """Choose each available worker in turn, then repeat.
+    """Give each worker a turn, then start over.
 
-    This is an in-memory baseline intended for one serialized caller. It does
-    not persist its position or coordinate multiple coordinator processes.
+    This remembers the last worker until the scheduler restarts.
+    Calls must happen one at a time. Separate processes do not share turns.
     """
 
     def __init__(self) -> None:
         self._last_worker: str | None = None
 
     def assign(self, worker_ids: Sequence[str]) -> str | None:
-        # Ignore duplicate IDs so a worker does not get extra turns.
+        # Remove duplicate IDs so each worker gets one turn.
         workers = list(dict.fromkeys(worker_ids))
         if not workers:
             return None
@@ -44,5 +44,5 @@ class RoundRobinScheduler(Scheduler):
         return self._last_worker
 
     def on_result(self, worker_id: str, result: Mapping[str, Any]) -> None:
-        # Round robin does not use results to change worker selection.
+        # Results do not change whose turn is next.
         pass
