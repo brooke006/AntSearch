@@ -1,10 +1,20 @@
+import threading
 import time
 
 import fakeredis
 import pytest
 from fastapi.testclient import TestClient
+from redis.commands.core import HashCommands, SetCommands
 
-from antsearch.coordinator import PENDING_KEY, WORKERS_KEY, create_app, mark_offline, worker_key
+from antsearch.coordinator import (
+    PENDING_KEY,
+    WORKERS_KEY,
+    create_app,
+    mark_offline,
+    requeue_tasks,
+    worker_key,
+    worker_tasks_key,
+)
 
 TIMEOUT = 30
 
@@ -229,3 +239,84 @@ def test_background_sweep_marks_workers_offline_without_requests(redis_client, c
             time.sleep(0.01)
 
     assert redis_client.hget(worker_key("w1"), "status") == "offline"
+
+
+def interrupt_once(monkeypatch, commands, method, key, action):
+    """Run action() right after the first read of `key` with `method`, i.e. between a read and its write.
+
+    Patches the redis-py command class, so it catches the read whether it goes through the client
+    or a pipeline.
+    """
+    real = getattr(commands, method)
+    fired = []
+
+    def patched(self, name, *args, **kwargs):
+        out = real(self, name, *args, **kwargs)
+        if name == key and not fired:
+            fired.append(True)
+            action()
+        return out
+
+    monkeypatch.setattr(commands, method, patched)
+
+
+def test_overlapping_checks_requeue_a_task_only_once(client, redis_client, clock, monkeypatch):
+    register(client, "w1")
+    add_tasks(client, "TIC 1", "TIC 2")
+    client.post("/tasks/request", json={"worker_id": "w1"})
+    # Two checks on two threads, lined up so both read w1's status and both read its tasks
+    # before either writes: the worst-case interleaving.
+    barrier = threading.Barrier(2, timeout=5)
+    paused = threading.local()
+    reads = [(HashCommands, "hmget", worker_key("w1")), (SetCommands, "smembers", worker_tasks_key("w1"))]
+    for commands, method, key in reads:
+        real = getattr(commands, method)
+
+        def patched(self, name, *args, _real=real, _key=key, **kwargs):
+            out = _real(self, name, *args, **kwargs)
+            if name == _key and _key not in vars(paused):
+                setattr(paused, _key, True)  # pause only on each thread's first read; retries run free
+                barrier.wait()
+            return out
+
+        monkeypatch.setattr(commands, method, patched)
+
+    late = clock.now + TIMEOUT + 1
+    marked = []
+    def check():
+        marked.extend(mark_offline(redis_client, late, TIMEOUT))
+
+    threads = [threading.Thread(target=check) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert redis_client.lrange(PENDING_KEY, 0, -1) == ["t1", "t2"]
+    assert marked == ["w1"]
+
+
+def test_check_overlapping_reregister_requeues_a_task_only_once(client, redis_client, clock, monkeypatch):
+    register(client, "w1")
+    add_tasks(client, "TIC 1")
+    client.post("/tasks/request", json={"worker_id": "w1"})
+    reregister = lambda: requeue_tasks(redis_client, "w1")  # noqa: E731
+    interrupt_once(monkeypatch, SetCommands, "smembers", worker_tasks_key("w1"), reregister)
+
+    mark_offline(redis_client, clock.now + TIMEOUT + 1, TIMEOUT)
+
+    assert redis_client.lrange(PENDING_KEY, 0, -1) == ["t1"]
+
+
+def test_heartbeat_during_check_keeps_worker_online(client, redis_client, clock, monkeypatch):
+    register(client, "w1")
+    add_tasks(client, "TIC 1")
+    client.post("/tasks/request", json={"worker_id": "w1"})
+    clock.now += TIMEOUT + 1
+    # The heartbeat arrives after the check has seen w1 as late, before it marks w1 offline.
+    heartbeat = lambda: client.post("/workers/w1/heartbeat")  # noqa: E731
+    interrupt_once(monkeypatch, HashCommands, "hmget", worker_key("w1"), heartbeat)
+
+    assert mark_offline(redis_client, clock.now, TIMEOUT) == []
+    assert redis_client.hget(worker_key("w1"), "status") == "online"
+    assert client.get("/tasks/t1").json()["status"] == "assigned"

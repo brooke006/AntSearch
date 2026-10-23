@@ -64,16 +64,31 @@ class TaskResult(BaseModel):
     result: dict[str, Any]
 
 
-def requeue_tasks(redis_client: redis.Redis, worker_id: str) -> list[str]:
-    """Put every task assigned to worker_id back at the front of the pending queue."""
-    task_ids = sorted(redis_client.smembers(worker_tasks_key(worker_id)))
-    pipe = redis_client.pipeline()
+def _queue_requeue(pipe: redis.client.Pipeline, worker_id: str) -> list[str]:
+    """Read worker_id's tasks, then queue the commands that put them back at the front of the queue.
+
+    pipe must be watching the worker's task set; this switches it to MULTI.
+    """
+    task_ids = sorted(pipe.smembers(worker_tasks_key(worker_id)))
+    pipe.multi()
     for task_id in task_ids:
         pipe.hset(task_key(task_id), "status", "pending")
         pipe.hdel(task_key(task_id), "worker_id", "assigned_at")
         pipe.lpush(PENDING_KEY, task_id)
     pipe.delete(worker_tasks_key(worker_id))
-    pipe.execute()
+    return task_ids
+
+
+def requeue_tasks(redis_client: redis.Redis, worker_id: str) -> list[str]:
+    """Put every task assigned to worker_id back at the front of the pending queue.
+
+    Runs as a Redis transaction watching the worker's task set: if anything else changes the set
+    between the read and the write (say a heartbeat check requeueing the same tasks), the write
+    is dropped and retried against the new contents, so no task is queued twice.
+    """
+    task_ids = redis_client.transaction(
+        lambda pipe: _queue_requeue(pipe, worker_id), worker_tasks_key(worker_id), value_from_callable=True
+    )
     if task_ids:
         log.info("requeued tasks %s from worker %s", ", ".join(task_ids), worker_id)
     return task_ids
@@ -83,15 +98,36 @@ def mark_offline(redis_client: redis.Redis, now: float, timeout: float) -> list[
     """Mark online workers with no heartbeat in the last `timeout` seconds as offline.
 
     Their tasks are requeued. Returns the IDs of the workers that were marked offline.
+
+    Several checks can run at once (the background loop and requests, on different threads), so
+    each worker's check, offline mark and requeue happen in one Redis transaction watching that
+    worker's keys. If another check, a heartbeat or a re-registration changes them first, the
+    transaction retries with fresh values: a worker is only marked offline once, its tasks are
+    only requeued once, and a heartbeat that lands mid-check keeps the worker online.
     """
+
+    def check(pipe: redis.client.Pipeline, worker_id: str):
+        status, last_heartbeat = pipe.hmget(worker_key(worker_id), "status", "last_heartbeat")
+        if status != "online" or now - float(last_heartbeat) <= timeout:
+            return None
+        task_ids = _queue_requeue(pipe, worker_id)
+        pipe.hset(worker_key(worker_id), "status", "offline")
+        return now - float(last_heartbeat), task_ids
+
     marked = []
     for worker_id in sorted(redis_client.smembers(WORKERS_KEY)):
-        status, last_heartbeat = redis_client.hmget(worker_key(worker_id), "status", "last_heartbeat")
-        if status != "online" or now - float(last_heartbeat) <= timeout:
+        outcome = redis_client.transaction(
+            lambda pipe: check(pipe, worker_id),
+            worker_key(worker_id),
+            worker_tasks_key(worker_id),
+            value_from_callable=True,
+        )
+        if outcome is None:
             continue
-        redis_client.hset(worker_key(worker_id), "status", "offline")
-        log.warning("worker %s missed heartbeats for %.0f s; marked offline", worker_id, now - float(last_heartbeat))
-        requeue_tasks(redis_client, worker_id)
+        silent_for, task_ids = outcome
+        log.warning("worker %s missed heartbeats for %.0f s; marked offline", worker_id, silent_for)
+        if task_ids:
+            log.info("requeued tasks %s from worker %s", ", ".join(task_ids), worker_id)
         marked.append(worker_id)
     return marked
 
