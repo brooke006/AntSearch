@@ -1,48 +1,33 @@
-"""Common scheduler interface and a round-robin baseline.
-
-The caller supplies available worker IDs in a stable order. The coordinator
-still owns task storage, worker health, and sending tasks to workers.
-"""
-
-from abc import ABC, abstractmethod
-from collections.abc import Mapping, Sequence
-from typing import Any
-
-
-class Scheduler(ABC):
-    @abstractmethod
-    def assign(self, worker_ids: Sequence[str]) -> str | None:
-        """Choose an available worker, or return None if there are none."""
-
-    @abstractmethod
-    def on_result(self, worker_id: str, result: Mapping[str, Any]) -> None:
-        """Receive a completed worker result for scheduler feedback."""
+class Scheduler:
+    def assign(self, workers):
+        raise NotImplementedError
+    def on_result(self, worker, result):
+        raise NotImplementedError
 
 
 class RoundRobinScheduler(Scheduler):
-    """Choose each available worker in turn, then repeat.
+    def __init__(self):
+        self.last_worker = None
 
-    This is an in-memory baseline intended for one serialized caller. It does
-    not persist its position or coordinate multiple coordinator processes.
-    """
+    def assign(self, workers):
+        available_workers = []
+        for worker in workers:
+            if worker not in available_workers:
+                available_workers.append(worker)
 
-    def __init__(self) -> None:
-        self._last_worker: str | None = None
-
-    def assign(self, worker_ids: Sequence[str]) -> str | None:
-        # Ignore duplicate IDs so a worker does not get extra turns.
-        workers = list(dict.fromkeys(worker_ids))
-        if not workers:
+        if len(available_workers) == 0:
             return None
 
-        if self._last_worker in workers:
-            index = (workers.index(self._last_worker) + 1) % len(workers)
-        else:
-            index = 0
+        position = 0
+        if self.last_worker in available_workers:
+            position = available_workers.index(self.last_worker)
+            position = position + 1
 
-        self._last_worker = workers[index]
-        return self._last_worker
+        if position == len(available_workers):
+            position = 0
+        worker = available_workers[position]
+        self.last_worker = worker
+        return worker
 
-    def on_result(self, worker_id: str, result: Mapping[str, Any]) -> None:
-        # Round robin does not use results to change worker selection.
+    def on_result(self, worker, result):
         pass
