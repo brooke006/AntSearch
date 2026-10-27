@@ -1,4 +1,6 @@
-"""Single-star science spike: download a TESS light curve, flatten it, run BLS, plot the fold.
+"""Single-star transit search: download a TESS light curve, flatten it, run BLS, plot the fold.
+
+run_task() is the unit of work a worker runs; main() is the command-line science check.
 
     python -m antsearch.pipeline                      # WASP-18 b, TESS sector 2
     python -m antsearch.pipeline --target "Pi Men" --known-period 6.2678 --sector 1
@@ -15,7 +17,7 @@ import argparse
 import logging
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
@@ -173,6 +175,41 @@ def plot_folded(time, flux, result: BLSResult, path: Path, title: str = "") -> P
     return path
 
 
+def search(raw, min_period: float = 0.5, max_period: float = 15.0):
+    """Flatten and BLS-search a light curve; return the flattened light curve and the best signal.
+
+    Two passes: the first finds the transits, then the light curve is re-flattened with them masked
+    out of the trend, so the filter does not eat the dip, and searched again.
+    """
+    raw = raw.remove_nans()
+    lc = flatten(raw)
+    result = run_bls(lc.time.value, lc.flux.value, min_period=min_period, max_period=max_period)
+    lc = flatten(raw, mask=transit_mask(raw.time.value, result))
+    return lc, run_bls(lc.time.value, lc.flux.value, min_period=min_period, max_period=max_period)
+
+
+def run_task(star_id: str, min_period: float = 0.5, max_period: float = 15.0) -> dict:
+    """Search one star for transits: the unit of work a worker runs.
+
+    Searches the first SPOC 2-minute light curve MAST has for star_id (any name MAST resolves, such
+    as "TOI-102" or "WASP-18"), reusing a cached download if there is one. Returns the best signal
+    and the download and compute times in seconds, ready to send as JSON. Raises NoDataError or
+    DownloadError like download_light_curve.
+    """
+    start = time.perf_counter()
+    raw = download_light_curve(star_id)
+    downloaded = time.perf_counter()
+    _, result = search(raw, min_period=min_period, max_period=max_period)
+    sector = raw.meta.get("SECTOR")
+    return {
+        "star_id": star_id,
+        "sector": None if sector is None else int(sector),
+        **asdict(result),
+        "download_seconds": round(downloaded - start, 3),
+        "compute_seconds": round(time.perf_counter() - downloaded, 3),
+    }
+
+
 def period_error(found: float, known: float) -> float:
     """Fractional difference between a recovered and a known period."""
     return abs(found - known) / known
@@ -192,18 +229,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        raw = download_light_curve(args.target, sector=args.sector, attempts=args.attempts).remove_nans()
+        raw = download_light_curve(args.target, sector=args.sector, attempts=args.attempts)
     except NoDataError as exc:
         log.error("%s", exc)
         return EXIT_NO_DATA
     except DownloadError as exc:
         log.error("%s", exc)
         return EXIT_DOWNLOAD_FAILED
-    lc = flatten(raw)
-    result = run_bls(lc.time.value, lc.flux.value, min_period=args.min_period, max_period=args.max_period)
-    # Second pass: re-flatten with the transits masked out of the trend, then search again.
-    lc = flatten(raw, mask=transit_mask(raw.time.value, result))
-    result = run_bls(lc.time.value, lc.flux.value, min_period=args.min_period, max_period=args.max_period)
+    lc, result = search(raw, min_period=args.min_period, max_period=args.max_period)
     error = period_error(result.period, args.known_period)
 
     title = (

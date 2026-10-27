@@ -31,6 +31,7 @@ The [Makefile](Makefile) wraps the common commands. Run `make` on its own to lis
 | `make build` | Build the Docker image (`antsearch:dev`; override with `IMAGE=...`) |
 | `make up` / `make down` | Start or stop the local cluster in the background |
 | `make logs` / `make ps` | Follow the cluster's logs / list its containers |
+| `make submit` | Queue the first 50 stars of the TESS list on the cluster and wait for the results (`STARS=...` for another count) |
 | `make test` | Unit and science tests (everything that doesn't need Docker) |
 | `make test-unit` | Fast tests only: coordinator, worker, package |
 | `make test-science` | Light-curve pipeline tests |
@@ -45,11 +46,11 @@ Tests come in three types, selected with pytest markers:
 
 | Type | Command | Covers | Needs |
 |---|---|---|---|
-| Unit | `make test-unit` | Coordinator endpoints (against [fakeredis](https://github.com/cunla/fakeredis-py)), worker heartbeats, package | Nothing; takes seconds |
-| Science | `make test-science` | Pipeline: flatten, BLS, plotting, download retries and exit codes, using a synthetic light curve and faked MAST errors | The `science` extra (skipped without it); no network |
-| Integration | `make test-integration` | The real cluster over HTTP: real Redis, worker containers heartbeating, a full task round trip, a silent worker going offline | Docker |
+| Unit | `make test-unit` | Coordinator endpoints (against [fakeredis](https://github.com/cunla/fakeredis-py)), the worker loop, the submit script, two in-process workers processing 50 stars, package | Nothing; takes seconds |
+| Science | `make test-science` | Pipeline: flatten, BLS, plotting, `run_task`, download retries and exit codes, using a synthetic light curve and faked MAST errors | The `science` extra (skipped without it); no network |
+| Integration | `make test-integration` | The real cluster over HTTP: real Redis, the two worker containers processing 50 tasks, a full task round trip, a silent worker going offline and its task finished by another | Docker |
 
-`make test` (or plain `python -m pytest`) runs the unit and science tests. The integration tests are skipped unless `ANTSEARCH_URL` points at a coordinator. `make test-integration` sets that for you: it starts a separate compose project (`antsearch-it`) on port 8001 with a 3-second heartbeat timeout, runs the tests, and removes it again, so it doesn't touch a cluster you started with `make up`.
+`make test` (or plain `python -m pytest`) runs the unit and science tests. The integration tests are skipped unless `ANTSEARCH_URL` points at a coordinator. `make test-integration` sets that for you: it starts a separate compose project (`antsearch-it`) on port 8001 with a 3-second heartbeat timeout, runs the tests, and removes it again, so it doesn't touch a cluster you started with `make up`. Its workers run simulated tasks (`WORKER_TASK=simulated`), so the tests don't download from MAST.
 
 To run the same selections with pytest directly, use `-m "not science and not integration"`, `-m science` or `-m integration`.
 
@@ -71,13 +72,49 @@ With [Docker](https://docs.docker.com/get-docker/) running, start Redis, the coo
 make up          # or, in the foreground: docker compose up --build
 ```
 
-The coordinator is published at http://localhost:8000 (set `ANTSEARCH_PORT` to use another port). Each worker registers and then sends a heartbeat every third of the heartbeat timeout. The timeout defaults to 30 s; set `HEARTBEAT_TIMEOUT` to change it. To see the workers and their status:
+The coordinator is published at http://localhost:8000 (set `ANTSEARCH_PORT` to use another port). Each worker registers, sends a heartbeat every third of the heartbeat timeout, and pulls tasks from the coordinator (see [Workers](#workers)). The timeout defaults to 30 s; set `HEARTBEAT_TIMEOUT` to change it. To see the workers, their status and the tasks they hold:
 
 ```bash
 curl localhost:8000/workers
 ```
 
+To give the workers something to do, queue stars from the bundled TESS list ([tess_data_mixed.csv](src/antsearch/datasets/tess_data_mixed.csv): 100 TOIs with confirmed planets, then 100 false positives) and wait for the results:
+
+```bash
+make submit              # first 50 stars; STARS=10 make submit for fewer
+```
+
+It prints a line per star (who ran it, and the period and depth found or the error), then the total time and how many tasks each worker ran. Each star takes about a minute, mostly searching MAST and downloading the light curve. `python -m antsearch.submit --help` lists the options, including `--stars` for another CSV and `--no-wait`.
+
 `make down` stops the cluster. `make up` always rebuilds the images, so it picks up code changes.
+
+## Workers
+
+`python -m antsearch.worker` (what the compose workers run) joins a coordinator and works until it gets SIGINT or SIGTERM:
+
+1. Register, then send heartbeats from a background thread so the worker stays online through long tasks.
+2. Request a task. If the queue is empty, or the coordinator can't be reached, wait `POLL_INTERVAL` seconds and ask again.
+3. Run the task: by default `pipeline.run_task`, the transit search on that star's first SPOC 2-minute light curve. A task that raises (say the star has no light curve on MAST) is reported with an `{"error", "message"}` result instead.
+4. Report the result, retrying network errors. If the coordinator answers 409, the worker was marked offline and the task went to someone else, so the result is dropped.
+
+If the coordinator forgets the worker or marks it offline, the worker registers again. On SIGTERM it finishes and reports the task it's running before it exits (compose gives it a minute).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `COORDINATOR_URL` | `http://localhost:8000` | Coordinator to join |
+| `WORKER_ID` | the host name | Name to register as |
+| `WORKER_TASK` | `transit` | `transit` runs the transit search; `simulated` waits `SIMULATED_TASK_SECONDS` and returns a fake result, for tests and scheduler experiments that shouldn't hit MAST |
+| `SIMULATED_TASK_SECONDS` | `1` | How long a simulated task takes |
+| `POLL_INTERVAL` | `2` | Seconds between task requests while the queue is empty |
+
+To run a worker outside Docker against a cluster started with `make up`: `WORKER_ID=laptop python -m antsearch.worker`.
+
+A transit-search result looks like this (TOI-102, known period 4.4119 d):
+
+```json
+{"star_id": "TOI-102", "sector": 1, "period": 4.41305, "t0": 1326.0756, "duration": 0.12,
+ "depth": 0.0131, "power": 0.283, "download_seconds": 43.96, "compute_seconds": 6.31}
+```
 
 ## Coordinator API
 
@@ -137,8 +174,10 @@ It flattens twice: the first BLS pass finds the transits, then the light curve i
 AntSearch/
 ├── src/antsearch/
 │   ├── coordinator.py  # FastAPI coordinator: workers, heartbeats, task queue, results (Redis)
-│   ├── pipeline.py     # single-star science check: download, flatten, BLS, folded plot
-│   └── worker.py       # worker stub (registers, then sends heartbeats)
+│   ├── pipeline.py     # transit search: download, flatten, BLS, folded plot; run_task() for workers
+│   ├── submit.py       # queue stars from a star list and wait for the results
+│   ├── worker.py       # worker: registers, heartbeats, pulls tasks, runs them, reports results
+│   └── datasets/       # TESS star list (tess_data_mixed.csv) and the script that rebuilt it
 ├── tests/              # pytest tests; test_integration.py needs a running cluster
 ├── Makefile            # build, run, test and coverage shortcuts (`make help`)
 ├── pyproject.toml      # package metadata, dependencies, pytest config

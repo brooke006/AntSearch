@@ -5,13 +5,17 @@ COMPOSE ?= docker compose
 IMAGE   ?= antsearch:dev
 PYTEST  := $(PYTHON) -m pytest
 
+STARS   ?= 50
+
 # Integration tests get their own compose project, port and a short heartbeat timeout,
-# so they never touch a dev stack started with `make up`.
+# so they never touch a dev stack started with `make up`. Their workers run simulated tasks
+# instead of downloading from MAST.
 IT_PORT    ?= 8001
-IT_COMPOSE := ANTSEARCH_PORT=$(IT_PORT) HEARTBEAT_TIMEOUT=3 $(COMPOSE) -p antsearch-it
+IT_COMPOSE := ANTSEARCH_PORT=$(IT_PORT) HEARTBEAT_TIMEOUT=3 WORKER_TASK=simulated SIMULATED_TASK_SECONDS=0.2 \
+	POLL_INTERVAL=0.5 $(COMPOSE) -p antsearch-it
 
 .DEFAULT_GOAL := help
-.PHONY: help install build up down logs ps test test-unit test-science test-integration test-all coverage clean
+.PHONY: help install build up down logs ps submit test test-unit test-science test-integration test-all coverage clean
 
 help: ## Show this list
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  %-18s %s\n", $$1, $$2}'
@@ -33,6 +37,9 @@ logs: ## Follow the stack's logs
 
 ps: ## Show the stack's containers
 	$(COMPOSE) ps
+
+submit: ## Queue the first STARS stars (default 50) on the stack and wait for the results
+	ANTSEARCH_URL=http://localhost:$${ANTSEARCH_PORT:-8000} $(PYTHON) -m antsearch.submit --limit $(STARS)
 
 test: ## Unit and science tests: everything that doesn't need a running stack
 	$(PYTEST) -m "not integration"

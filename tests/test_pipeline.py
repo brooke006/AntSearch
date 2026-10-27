@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 import pytest
 
@@ -175,3 +177,18 @@ def test_main_exit_code_reports_period_check(monkeypatch, tmp_path, known, code)
 
     assert pipeline.main(argv) == code
     assert (tmp_path / "f.png").exists()
+
+
+def test_run_task_returns_json_ready_signal_and_timings(monkeypatch):
+    lc = synthetic_light_curve()
+    lc.meta["SECTOR"] = 2
+    monkeypatch.setattr(pipeline, "download_light_curve", lambda star_id: lc)
+
+    result = pipeline.run_task("TOI-102", min_period=1, max_period=10)
+
+    assert json.loads(json.dumps(result)) == result
+    assert (result["star_id"], result["sector"]) == ("TOI-102", 2)
+    assert period_error(result["period"], PERIOD) < 0.01
+    assert result["depth"] == pytest.approx(DEPTH, rel=0.1)
+    assert result["power"] > 0
+    assert result["download_seconds"] >= 0 and result["compute_seconds"] > 0
