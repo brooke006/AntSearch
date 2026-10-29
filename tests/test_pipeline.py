@@ -1,11 +1,12 @@
 import json
 
-import numpy as np
 import pytest
 
 pytestmark = pytest.mark.science
 
+# numpy and requests come with the science extra, so they're imported only once lightkurve is found.
 lk = pytest.importorskip("lightkurve")
+import numpy as np
 import requests
 
 from antsearch import pipeline

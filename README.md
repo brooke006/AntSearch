@@ -97,7 +97,7 @@ It prints a line per star (who ran it, and the period and depth found or the err
 3. Run the task: by default `pipeline.run_task`, the transit search on that star's first SPOC 2-minute light curve. A task that raises (say the star has no light curve on MAST) is reported with an `{"error", "message"}` result instead.
 4. Report the result, retrying network errors. If the coordinator answers 409, the worker was marked offline and the task went to someone else, so the result is dropped.
 
-If the coordinator forgets the worker or marks it offline, the worker registers again. On SIGTERM it finishes and reports the task it's running before it exits (compose gives it a minute).
+If the coordinator forgets the worker or marks it offline, the worker registers again. On SIGTERM it finishes and reports the task it's running before it exits (compose gives it three minutes).
 
 | Variable | Default | Meaning |
 |---|---|---|

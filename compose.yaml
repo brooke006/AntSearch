@@ -4,7 +4,7 @@
 x-worker: &worker
   build: .
   command: ["python", "-m", "antsearch.worker"]
-  stop_grace_period: 1m  # let a running transit search finish and report before the worker exits
+  stop_grace_period: 3m  # let a running transit search finish and report before the worker exits; a first download can take over a minute
   depends_on:
     coordinator:
       condition: service_healthy
