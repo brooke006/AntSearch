@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 import pytest
 
@@ -155,6 +157,45 @@ def test_unresolvable_target_is_not_retried(monkeypatch, tmp_path, no_sleep):
     assert no_sleep == []
 
 
+def test_second_download_reads_the_cache_without_searching_mast(monkeypatch, tmp_path, no_sleep):
+    lc = synthetic_light_curve()
+    result = FakeSearchResult([lc])
+    cached = pipeline.cache_path(result.table[0], tmp_path)
+    reads = []
+    monkeypatch.setattr(lk, "read", lambda path, **kwargs: reads.append(path) or lc)
+    fake_search(monkeypatch, result)  # a second search would fail: only one is scripted
+
+    pipeline.download_light_curve("TOI-102", download_dir=tmp_path)
+
+    assert pipeline.download_light_curve("TOI-102", download_dir=tmp_path) is lc
+    assert reads == [cached]
+
+
+def test_cache_is_kept_per_target_and_sector(tmp_path):
+    keys = {
+        pipeline.index_path("TOI-102", None, "SPOC", tmp_path),
+        pipeline.index_path("TOI-102", 2, "SPOC", tmp_path),
+        pipeline.index_path("TOI-103", None, "SPOC", tmp_path),
+    }
+
+    assert len(keys) == 3
+    assert pipeline.index_path("Pi Men", 1, "SPOC", tmp_path).name == "pi_men_spoc_sector-1.txt"
+
+
+def test_unreadable_cached_file_is_downloaded_again(monkeypatch, tmp_path, no_sleep):
+    lc = synthetic_light_curve()
+    result = FakeSearchResult([lc])
+    cached = pipeline.cache_path(result.table[0], tmp_path)
+    cached.parent.mkdir(parents=True)
+    cached.write_bytes(b"truncated")
+    index = pipeline.index_path("TOI-102", None, "SPOC", tmp_path)
+    pipeline.write_index(index, cached.relative_to(tmp_path))
+    fake_search(monkeypatch, result)
+
+    assert pipeline.download_light_curve("TOI-102", download_dir=tmp_path) is lc
+    assert index.exists()
+
+
 @pytest.mark.parametrize(
     "error, code",
     [(pipeline.NoDataError("none"), pipeline.EXIT_NO_DATA), (pipeline.DownloadError("down"), pipeline.EXIT_DOWNLOAD_FAILED)],
@@ -175,3 +216,18 @@ def test_main_exit_code_reports_period_check(monkeypatch, tmp_path, known, code)
 
     assert pipeline.main(argv) == code
     assert (tmp_path / "f.png").exists()
+
+
+def test_run_task_returns_json_ready_signal_and_timings(monkeypatch):
+    lc = synthetic_light_curve()
+    lc.meta["SECTOR"] = 2
+    monkeypatch.setattr(pipeline, "download_light_curve", lambda star_id: lc)
+
+    result = pipeline.run_task("TOI-102", min_period=1, max_period=10)
+
+    assert json.loads(json.dumps(result)) == result
+    assert (result["star_id"], result["sector"]) == ("TOI-102", 2)
+    assert period_error(result["period"], PERIOD) < 0.01
+    assert result["depth"] == pytest.approx(DEPTH, rel=0.1)
+    assert result["power"] > 0
+    assert result["download_seconds"] >= 0 and result["compute_seconds"] > 0

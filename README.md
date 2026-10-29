@@ -125,11 +125,18 @@ It logs the recovered period and its error against the known one and writes `out
 | 3 | No matching data on MAST, or the star name can't be resolved. Retrying won't help. |
 | 4 | Download failed on every attempt (MAST unreachable or erroring). Try again later. |
 
-Network and MAST errors are retried 3 times by default (`--attempts`), waiting 2 s and then 4 s. If a cached download is corrupt, usually because an earlier download was cut off, it's deleted and downloaded again. Lightkurve caches files under `~/.cache/lightkurve`.
+Network and MAST errors are retried 3 times by default (`--attempts`), waiting 2 s and then 4 s. Downloads are cached under `~/.cache/lightkurve`, so running the same star and sector again reads the file from disk without contacting MAST. If a cached download is corrupt, usually because an earlier download was cut off, it's deleted and downloaded again.
 
 To try another star, pass `--target`, `--known-period` and `--sector`, e.g. `--target "Pi Men" --known-period 6.2678 --sector 1`. Run with `--help` for the other options.
 
 It flattens twice: the first BLS pass finds the transits, then the light curve is re-flattened with them masked so the detrending filter doesn't eat the dip.
+
+For workers, the same search is packaged as `pipeline.run_task(star_id)`, which takes any name MAST resolves (such as `TOI-102`), searches the star's first SPOC 2-minute light curve and returns a JSON-ready dict: the best period, mid-transit time, duration and depth, the BLS `power` (its signal-to-noise objective), and `download_seconds` and `compute_seconds`. A cached star's download time drops to tens of milliseconds. For TOI-102 (known period 4.4119 d):
+
+```json
+{"star_id": "TOI-102", "sector": 1, "period": 4.41305, "t0": 1326.0756, "duration": 0.12,
+ "depth": 0.0131, "power": 0.283, "download_seconds": 52.56, "compute_seconds": 7.40}
+```
 
 ## Project layout
 
