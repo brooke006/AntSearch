@@ -22,6 +22,9 @@ science = ["astropy>=6", "lightkurve>=2.4", "matplotlib>=3.8", "numpy>=1.26"]
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+antsearch = ["datasets/*.csv"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"

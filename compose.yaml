@@ -1,9 +1,10 @@
-# Local dev stack: Redis, the coordinator stub and two workers.
+# Local dev stack: Redis, the coordinator and two workers.
 #   docker compose up --build
 
 x-worker: &worker
   build: .
   command: ["python", "-m", "antsearch.worker"]
+  stop_grace_period: 3m  # let a running transit search finish and report before the worker exits; a first download can take over a minute
   depends_on:
     coordinator:
       condition: service_healthy
@@ -45,9 +46,15 @@ services:
     environment:
       COORDINATOR_URL: http://coordinator:8000
       WORKER_ID: worker-1
+      WORKER_TASK: ${WORKER_TASK:-transit}
+      SIMULATED_TASK_SECONDS: ${SIMULATED_TASK_SECONDS:-1}
+      POLL_INTERVAL: ${POLL_INTERVAL:-2}
 
   worker-2:
     <<: *worker
     environment:
       COORDINATOR_URL: http://coordinator:8000
       WORKER_ID: worker-2
+      WORKER_TASK: ${WORKER_TASK:-transit}
+      SIMULATED_TASK_SECONDS: ${SIMULATED_TASK_SECONDS:-1}
+      POLL_INTERVAL: ${POLL_INTERVAL:-2}
