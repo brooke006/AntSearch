@@ -5,6 +5,8 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
+# tc (from iproute2) adds network delay in failure scenarios; see antsearch.scenario.
+RUN apt-get update && apt-get install -y --no-install-recommends iproute2 && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml README.md ./
 COPY src ./src
 # The workers run the transit search, so the image needs the science extra.

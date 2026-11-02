@@ -1,0 +1,8 @@
+# worker-2 crashes 20 s in and comes back 40 s later; worker-1 crashes and restarts at once at 80 s.
+# With the default 30 s heartbeat timeout, the coordinator marks worker-2 offline about 50 s in and
+# hands its task to worker-1.
+duration: 100
+events:
+  - {at: 20, worker: worker-2, action: kill}
+  - {at: 60, worker: worker-2, action: start}
+  - {at: 80, worker: worker-1, action: restart}
