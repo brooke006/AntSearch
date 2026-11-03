@@ -28,6 +28,8 @@ services:
       COORDINATOR_HOST: 0.0.0.0
       COORDINATOR_PORT: "8000"
       HEARTBEAT_TIMEOUT: ${HEARTBEAT_TIMEOUT:-30}
+      SCHEDULER: ${SCHEDULER:-round-robin}
+      SCHEDULER_SEED: ${SCHEDULER_SEED:-}
     ports:
       - "${ANTSEARCH_PORT:-8000}:8000"
     depends_on:

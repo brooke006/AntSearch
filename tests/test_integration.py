@@ -45,6 +45,7 @@ def take_task(api, worker_id):
         assert response.status_code in (200, 204), response.text
         if response.status_code == 200:
             return response.json()["task_id"]
+        time.sleep(0.1)  # not this worker's turn; the worker chosen may poll slowly or have gone silent
     pytest.fail(f"worker {worker_id} never received a task")
 
 

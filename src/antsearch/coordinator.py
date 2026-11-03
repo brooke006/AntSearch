@@ -29,7 +29,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 
-from antsearch.scheduler import RoundRobinScheduler, Scheduler
+from antsearch.scheduler import Scheduler, make_scheduler
 
 log = logging.getLogger("antsearch.coordinator")
 
@@ -150,7 +150,7 @@ def create_app(
     """
 
     # Keep the factory's existing FIFO behavior unless a scheduler is supplied.
-    # main() explicitly enables round robin. One process owns scheduler state.
+    # main() chooses one from SCHEDULER (round robin by default). One process owns scheduler state.
     active_scheduler = scheduler
     scheduler_lock = threading.Lock()
 
@@ -320,9 +320,13 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
     timeout = float(os.environ.get("HEARTBEAT_TIMEOUT", DEFAULT_HEARTBEAT_TIMEOUT))
+    scheduler_name = os.environ.get("SCHEDULER", "round-robin")
+    seed = os.environ.get("SCHEDULER_SEED")
+    scheduler = make_scheduler(scheduler_name, int(seed) if seed else None)
+    log.info("using the %s scheduler", scheduler_name)
     client = redis.Redis.from_url(redis_url, decode_responses=True)
     uvicorn.run(
-        create_app(client, heartbeat_timeout=timeout, sweep_interval=timeout / 3, scheduler=RoundRobinScheduler()),
+        create_app(client, heartbeat_timeout=timeout, sweep_interval=timeout / 3, scheduler=scheduler),
         host=os.environ.get("COORDINATOR_HOST", "127.0.0.1"),
         port=int(os.environ.get("COORDINATOR_PORT", "8000")),
     )

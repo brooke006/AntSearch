@@ -118,7 +118,7 @@ A transit-search result looks like this (TOI-102, known period 4.4119 d):
 
 ## Coordinator API
 
-Workers and tasks are stored in Redis under `antsearch:` keys (the layout is described at the top of [coordinator.py](src/antsearch/coordinator.py)), so the coordinator can restart without losing them. The round-robin position is kept in memory and starts over when the coordinator restarts. Run one coordinator process when using this scheduler.
+Workers and tasks are stored in Redis under `antsearch:` keys (the layout is described at the top of [coordinator.py](src/antsearch/coordinator.py)), so the coordinator can restart without losing them. Scheduler state (the round-robin position, the random choice, the greedy estimates) is kept in memory and starts over when the coordinator restarts. Run one coordinator process.
 
 | Endpoint | Body | Response |
 |---|---|---|
@@ -131,9 +131,23 @@ Workers and tasks are stored in Redis under `antsearch:` keys (the layout is des
 | `GET /tasks/{id}` | none | The task's star, status, worker, timestamps and result |
 | `GET /health` | none | `{"status": "ok"}`, or 503 if Redis is unreachable |
 
-The coordinator started with `python -m antsearch.coordinator` uses round robin. Online workers without a running task take turns in worker-ID order. A worker requesting out of turn gets 204 and tries again after its normal polling interval. Busy and offline workers are skipped. A worker that finishes can keep taking work while the others are busy. An idle worker that stops requesting work but continues sending heartbeats can delay the others; it remains eligible until it takes work or goes offline.
+The coordinator started with `python -m antsearch.coordinator` uses round robin unless `SCHEDULER` says otherwise (see [Schedulers](#schedulers)). Online workers without a running task take turns in worker-ID order. A worker requesting out of turn gets 204 and tries again after its normal polling interval. Busy and offline workers are skipped. A worker that finishes can keep taking work while the others are busy. An idle worker that stops requesting work but continues sending heartbeats can delay the others; it remains eligible until it takes work or goes offline.
 
 `Scheduler.assign(worker_id, tasks, workers)` returns a pending task ID or `None`. It does not change Redis. The coordinator serializes scheduling and claims the selected task in a Redis transaction. `on_result(worker_id, result)` is called after an accepted result; round robin does not use the result to change its choices. The `create_app` factory accepts a scheduler argument; omitting it keeps the original FIFO behavior for existing callers and tests.
+
+### Schedulers
+
+Set `SCHEDULER` to choose one, for example `SCHEDULER=greedy make up`:
+
+| `SCHEDULER` | Each task goes to |
+|---|---|
+| `round-robin` (default) | The next available worker in worker-ID order |
+| `random` | An available worker chosen uniformly at random. Set `SCHEDULER_SEED` to an integer to repeat the same sequence of choices |
+| `greedy` | The available worker with the shortest estimated task time |
+
+"Available" means online with no running task, so a slower worker still gets work while a faster one is busy. All three make a worker that isn't chosen wait: it gets 204 and asks again after its polling interval.
+
+The greedy estimate is a moving average of `download_seconds + compute_seconds` from a worker's results. Workers with no result yet go first, so each one gets measured, and workers whose results have all failed go last. Simulated tasks all report the same `compute_seconds`, so greedy sees no difference between simulated workers and always prefers the lowest worker ID.
 
 **Joining and leaving.** A worker joins by registering. If it sends no heartbeat for longer than the timeout, the coordinator marks it `offline`. A background check runs every third of the timeout, and `GET /workers` and `POST /tasks/request` also check first. When a worker is marked offline, its unfinished tasks go back to the front of the queue for another worker. An offline worker gets 409 on task requests and result submissions until it sends a heartbeat or registers again. A worker that registers again after a restart gives up any tasks it held, since it lost them in the restart.
 
