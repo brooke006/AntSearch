@@ -118,7 +118,7 @@ A transit-search result looks like this (TOI-102, known period 4.4119 d):
 
 ## Coordinator API
 
-All state lives in Redis under `antsearch:` keys (the layout is described at the top of [coordinator.py](src/antsearch/coordinator.py)), so the coordinator can restart without losing workers or tasks.
+Workers and tasks are stored in Redis under `antsearch:` keys (the layout is described at the top of [coordinator.py](src/antsearch/coordinator.py)), so the coordinator can restart without losing them. The round-robin position is kept in memory and starts over when the coordinator restarts. Run one coordinator process when using this scheduler.
 
 | Endpoint | Body | Response |
 |---|---|---|
@@ -126,12 +126,14 @@ All state lives in Redis under `antsearch:` keys (the layout is described at the
 | `POST /workers/{id}/heartbeat` | none | `{"worker_id", "status": "online"}`; 404 if not registered |
 | `GET /workers` | none | Every worker with its status, last heartbeat and assigned tasks |
 | `POST /tasks` | `{"star_ids": ["WASP-18", ...]}` | 201, `{"task_ids": ["t1", ...]}` |
-| `POST /tasks/request` | `{"worker_id": "w1"}` | `{"task_id", "star_id"}`; 204 if nothing is queued; 404 if not registered; 409 if offline |
+| `POST /tasks/request` | `{"worker_id": "w1"}` | `{"task_id", "star_id"}`; 204 if no task is available for this worker; 404 if not registered; 409 if offline |
 | `POST /tasks/{id}/result` | `{"worker_id": "w1", "result": {...}}` | `{"task_id", "status": "done"}`; 409 if the task isn't assigned to that worker |
 | `GET /tasks/{id}` | none | The task's star, status, worker, timestamps and result |
 | `GET /health` | none | `{"status": "ok"}`, or 503 if Redis is unreachable |
 
-Tasks are handed out first come, first served, until the scheduler (#5) replaces that.
+The coordinator started with `python -m antsearch.coordinator` uses round robin. Online workers without a running task take turns in worker-ID order. A worker requesting out of turn gets 204 and tries again after its normal polling interval. Busy and offline workers are skipped. A worker that finishes can keep taking work while the others are busy. An idle worker that stops requesting work but continues sending heartbeats can delay the others; it remains eligible until it takes work or goes offline.
+
+`Scheduler.assign(worker_id, tasks, workers)` returns a pending task ID or `None`. It does not change Redis. The coordinator serializes scheduling and claims the selected task in a Redis transaction. `on_result(worker_id, result)` is called after an accepted result; round robin does not use the result to change its choices. The `create_app` factory accepts a scheduler argument; omitting it keeps the original FIFO behavior for existing callers and tests.
 
 **Joining and leaving.** A worker joins by registering. If it sends no heartbeat for longer than the timeout, the coordinator marks it `offline`. A background check runs every third of the timeout, and `GET /workers` and `POST /tasks/request` also check first. When a worker is marked offline, its unfinished tasks go back to the front of the queue for another worker. An offline worker gets 409 on task requests and result submissions until it sends a heartbeat or registers again. A worker that registers again after a restart gives up any tasks it held, since it lost them in the restart.
 

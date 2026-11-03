@@ -15,10 +15,12 @@ tasks it held go back to the front of the pending queue.
 
 import asyncio
 import contextlib
+import copy
 import json
 import logging
 import os
 import time
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -26,6 +28,8 @@ import redis
 import uvicorn
 from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
+
+from antsearch.scheduler import RoundRobinScheduler, Scheduler
 
 log = logging.getLogger("antsearch.coordinator")
 
@@ -137,12 +141,18 @@ def create_app(
     heartbeat_timeout: float = DEFAULT_HEARTBEAT_TIMEOUT,
     sweep_interval: float | None = None,
     clock: Callable[[], float] = time.time,
+    scheduler: Scheduler | None = None,
 ) -> FastAPI:
     """Build the coordinator app.
 
     If sweep_interval is set, a background loop checks for missed heartbeats that often. Listing
     workers and requesting a task also check first, so their answers are never stale.
     """
+
+    # Keep the factory's existing FIFO behavior unless a scheduler is supplied.
+    # main() explicitly enables round robin. One process owns scheduler state.
+    active_scheduler = scheduler
+    scheduler_lock = threading.Lock()
 
     def sweep() -> list[str]:
         return mark_offline(redis_client, clock(), heartbeat_timeout)
@@ -220,16 +230,49 @@ def create_app(
 
     @app.post("/tasks/request")
     def request_task(request: TaskRequest):
+        nonlocal active_scheduler
         worker_id = request.worker_id
         sweep()
         if require_worker(worker_id)["status"] != "online":
             raise HTTPException(status_code=409, detail=f"worker {worker_id!r} is offline; register again")
-        task_id = redis_client.lpop(PENDING_KEY)
+        with scheduler_lock:
+            while True:
+                try:
+                    with redis_client.pipeline() as pipe:
+                        pipe.watch(PENDING_KEY, WORKERS_KEY, worker_tasks_key(worker_id))
+                        worker_ids = sorted(pipe.smembers(WORKERS_KEY))
+                        for item in worker_ids:
+                            pipe.watch(worker_key(item), worker_tasks_key(item))
+                        if pipe.hget(worker_key(worker_id), "status") != "online":
+                            raise HTTPException(status_code=409, detail="worker is offline")
+                        workers = []
+                        for item in worker_ids:
+                            if pipe.hget(worker_key(item), "status") == "online":
+                                if active_scheduler is None or pipe.scard(worker_tasks_key(item)) == 0:
+                                    workers.append(item)
+                        tasks = pipe.lrange(PENDING_KEY, 0, -1)
+                        candidate = copy.deepcopy(active_scheduler)
+                        task_id = candidate.assign(worker_id, tasks, workers) if candidate else (tasks[0] if tasks else None)
+                        if task_id is not None and task_id not in tasks:
+                            raise RuntimeError("scheduler selected a task outside the pending queue")
+                        if task_id is not None:
+                            pipe.watch(task_key(task_id))
+                            star_id = pipe.hget(task_key(task_id), "star_id")
+                        pipe.multi()
+                        if task_id is not None:
+                            pipe.lrem(PENDING_KEY, 1, task_id)
+                            pipe.hset(task_key(task_id), mapping={"status": "assigned", "worker_id": worker_id, "assigned_at": clock()})
+                            pipe.sadd(worker_tasks_key(worker_id), task_id)
+                        else:
+                            pipe.ping()
+                        pipe.execute()
+                        active_scheduler = candidate
+                    break
+                except redis.WatchError:
+                    # Retry without advancing the scheduler's committed state.
+                    continue
         if task_id is None:
             return Response(status_code=204)
-        redis_client.hset(task_key(task_id), mapping={"status": "assigned", "worker_id": worker_id, "assigned_at": clock()})
-        redis_client.sadd(worker_tasks_key(worker_id), task_id)
-        star_id = redis_client.hget(task_key(task_id), "star_id")
         log.info("assigned task %s (star %s) to worker %s", task_id, star_id, worker_id)
         return {"task_id": task_id, "star_id": star_id}
 
@@ -255,6 +298,9 @@ def create_app(
             mapping={"status": "done", "completed_at": clock(), "result": json.dumps(submission.result)},
         )
         redis_client.srem(worker_tasks_key(submission.worker_id), task_id)
+        with scheduler_lock:
+            if active_scheduler is not None:
+                active_scheduler.on_result(submission.worker_id, submission.result)
         log.info("task %s done by worker %s", task_id, submission.worker_id)
         return {"task_id": task_id, "status": "done"}
 
@@ -276,7 +322,7 @@ def main() -> None:
     timeout = float(os.environ.get("HEARTBEAT_TIMEOUT", DEFAULT_HEARTBEAT_TIMEOUT))
     client = redis.Redis.from_url(redis_url, decode_responses=True)
     uvicorn.run(
-        create_app(client, heartbeat_timeout=timeout, sweep_interval=timeout / 3),
+        create_app(client, heartbeat_timeout=timeout, sweep_interval=timeout / 3, scheduler=RoundRobinScheduler()),
         host=os.environ.get("COORDINATOR_HOST", "127.0.0.1"),
         port=int(os.environ.get("COORDINATOR_PORT", "8000")),
     )

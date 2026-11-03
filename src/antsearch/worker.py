@@ -58,7 +58,7 @@ def send_heartbeats(client: httpx.Client, worker_id: str, interval: float, stop:
 
 
 def request_task(client: httpx.Client, worker_id: str) -> dict[str, str] | None:
-    """Ask for the next task. Returns {"task_id", "star_id"}, or None if the queue is empty.
+    """Ask for the next task. Returns {"task_id", "star_id"}, or None if no task is available for this worker.
 
     If the coordinator has forgotten this worker (404) or marked it offline (409), register again
     and ask once more.
