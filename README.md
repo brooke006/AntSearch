@@ -32,8 +32,9 @@ The [Makefile](Makefile) wraps the common commands. Run `make` on its own to lis
 | `make up` / `make down` | Start or stop the local cluster in the background |
 | `make logs` / `make ps` | Follow the cluster's logs / list its containers |
 | `make submit` | Queue the first 50 stars of the TESS list on the cluster and wait for the results (`STARS=...` for another count) |
+| `make scenario` | Run a failure scenario on the cluster (`SCENARIO=scenarios/slow-worker.yaml`); see [Failure scenarios](#failure-scenarios) |
 | `make test` | Unit and science tests (everything that doesn't need Docker) |
-| `make test-unit` | Fast tests only: coordinator, worker, package |
+| `make test-unit` | Fast tests only: coordinator, worker, submit, scenarios, package |
 | `make test-science` | Light-curve pipeline tests |
 | `make test-integration` | Start a throwaway cluster, test it over HTTP, tear it down |
 | `make test-all` | `test` plus `test-integration` |
@@ -46,9 +47,9 @@ Tests come in three types, selected with pytest markers:
 
 | Type | Command | Covers | Needs |
 |---|---|---|---|
-| Unit | `make test-unit` | Coordinator endpoints (against [fakeredis](https://github.com/cunla/fakeredis-py)), the worker loop, the submit script, two in-process workers processing 50 stars, package | Nothing; takes seconds |
+| Unit | `make test-unit` | Coordinator endpoints (against [fakeredis](https://github.com/cunla/fakeredis-py)), the worker loop, the submit script, failure scenarios (against a fake Docker and clock), two in-process workers processing 50 stars, package | Nothing; takes seconds |
 | Science | `make test-science` | Pipeline: flatten, BLS, plotting, `run_task`, download retries and exit codes, using a synthetic light curve and faked MAST errors | The `science` extra (skipped without it); no network |
-| Integration | `make test-integration` | The real cluster over HTTP: real Redis, the two worker containers processing 50 tasks, a full task round trip, a silent worker going offline and its task finished by another | Docker |
+| Integration | `make test-integration` | The real cluster over HTTP: real Redis, the two worker containers processing 50 tasks, a full task round trip, a silent worker going offline and its task finished by another, a failure scenario slowing, killing and restarting a worker on schedule | Docker |
 
 `make test` (or plain `python -m pytest`) runs the unit and science tests. The integration tests are skipped unless `ANTSEARCH_URL` points at a coordinator. `make test-integration` sets that for you: it starts a separate compose project (`antsearch-it`) on port 8001 with a 3-second heartbeat timeout, runs the tests, and removes it again, so it doesn't touch a cluster you started with `make up`. Its workers run simulated tasks (`WORKER_TASK=simulated`), so the tests don't download from MAST.
 
@@ -115,6 +116,45 @@ A transit-search result looks like this (TOI-102, known period 4.4119 d):
 {"star_id": "TOI-102", "sector": 1, "period": 4.41305, "t0": 1326.0756, "duration": 0.12,
  "depth": 0.0131, "power": 0.283, "download_seconds": 43.96, "compute_seconds": 6.31}
 ```
+
+## Failure scenarios
+
+A scenario file makes failures repeatable: it limits workers' CPUs, adds network delay, and kills and restarts workers at set times. Run one against the cluster from `make up`:
+
+```bash
+make scenario SCENARIO=scenarios/crash-and-recover.yaml
+```
+
+This writes one JSON line per event to `output/scenarios/crash-and-recover.jsonl`, with the planned time (`at`) and when it actually happened (`elapsed`). Run a scenario in one terminal and the workload (`make submit`) in another; the scenario holds after its last event until `duration`, then puts the workers back to normal.
+
+```yaml
+duration: 100               # optional: reset and exit this many seconds after the start (default: wait for Ctrl-C)
+events:
+  - {at: 0,  worker: worker-1, action: cpu, cpus: 0.25}   # Docker CPU limit; cpus: 0 lifts it
+  - {at: 10, worker: worker-1, action: delay, ms: 300}    # delay on every packet the worker sends; ms: 0 removes it
+  - {at: 20, worker: worker-2, action: kill}              # SIGKILL: the worker vanishes mid-task
+  - {at: 60, worker: worker-2, action: start}             # start a killed worker again
+  - {at: 80, worker: worker-1, action: restart}           # kill, then start straight away
+```
+
+`worker` is a compose service name. [scenarios/](scenarios/) has two examples: `slow-worker.yaml` and `crash-and-recover.yaml`.
+
+What makes two runs of the same file match:
+
+- **Same starting state.** Before the first event, every worker the scenario names is started if it isn't running, and its CPU limit and delay are removed.
+- **Timed from the start, not from the last event.** A slow docker command makes its own event late but not the ones after it. Events at the same time run in file order.
+- **Delays survive restarts.** A kill throws away the container's network settings, so the scenario sets the delay again when it starts that worker.
+
+Run twice on the same stack, a six-event scenario applied every event within 5 ms of its planned time.
+
+Some things to know:
+
+- CPU limits slow the transit search, but not simulated tasks (`WORKER_TASK=simulated`), which only sleep.
+- Network delay applies to everything the worker sends: heartbeats, task requests, results and MAST downloads.
+- The worker containers need `NET_ADMIN` and `tc` for the delay. `compose.yaml` and the Dockerfile provide both, so run `make up` again after pulling this change.
+- Other options: `python -m antsearch.scenario FILE --dry-run` prints the timeline without touching Docker, and `-p PROJECT` targets another compose project. `--help` lists the rest.
+
+Exit status: 0 if every event applied, 1 if some failed (each is logged with its error and the scenario carries on), 3 if the workers couldn't be reached (is the cluster up?).
 
 ## Coordinator API
 
@@ -198,9 +238,11 @@ AntSearch/
 ├── src/antsearch/
 │   ├── coordinator.py  # FastAPI coordinator: workers, heartbeats, task queue, results (Redis)
 │   ├── pipeline.py     # transit search: download, flatten, BLS, folded plot; run_task() for workers
+│   ├── scenario.py     # failure scenarios: CPU limits, network delay, kills and restarts on a timeline
 │   ├── submit.py       # queue stars from a star list and wait for the results
 │   ├── worker.py       # worker: registers, heartbeats, pulls tasks, runs them, reports results
 │   └── datasets/       # TESS star list (tess_data_mixed.csv) and the script that rebuilt it
+├── scenarios/          # example failure scenarios for antsearch.scenario
 ├── tests/              # pytest tests; test_integration.py needs a running cluster
 ├── Makefile            # build, run, test and coverage shortcuts (`make help`)
 ├── pyproject.toml      # package metadata, dependencies, pytest config

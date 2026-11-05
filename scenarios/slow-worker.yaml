@@ -1,0 +1,8 @@
+# worker-1 gets a quarter of a CPU from the start and a 300 ms network delay from 30 s; both are
+# lifted at 90 s. worker-2 runs normally throughout, for comparison.
+duration: 120
+events:
+  - {at: 0,  worker: worker-1, action: cpu, cpus: 0.25}
+  - {at: 30, worker: worker-1, action: delay, ms: 300}
+  - {at: 90, worker: worker-1, action: cpu, cpus: 0}
+  - {at: 90, worker: worker-1, action: delay, ms: 0}

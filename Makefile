@@ -6,6 +6,7 @@ IMAGE   ?= antsearch:dev
 PYTEST  := $(PYTHON) -m pytest
 
 STARS   ?= 50
+SCENARIO ?=
 
 # Integration tests get their own compose project, port and a short heartbeat timeout,
 # so they never touch a dev stack started with `make up`. Their workers run simulated tasks
@@ -15,7 +16,7 @@ IT_COMPOSE := ANTSEARCH_PORT=$(IT_PORT) HEARTBEAT_TIMEOUT=3 WORKER_TASK=simulate
 	POLL_INTERVAL=0.5 $(COMPOSE) -p antsearch-it
 
 .DEFAULT_GOAL := help
-.PHONY: help install build up down logs ps submit test test-unit test-science test-integration test-all coverage clean
+.PHONY: help install build up down logs ps submit scenario test test-unit test-science test-integration test-all coverage clean
 
 help: ## Show this list
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  %-18s %s\n", $$1, $$2}'
@@ -41,10 +42,14 @@ ps: ## Show the stack's containers
 submit: ## Queue the first STARS stars (default 50) on the stack and wait for the results
 	ANTSEARCH_URL=http://localhost:$${ANTSEARCH_PORT:-8000} $(PYTHON) -m antsearch.submit --limit $(STARS)
 
+scenario: ## Run a failure scenario on the stack, e.g. SCENARIO=scenarios/slow-worker.yaml
+	@test -n "$(SCENARIO)" || { echo "usage: make scenario SCENARIO=scenarios/<name>.yaml"; exit 2; }
+	$(PYTHON) -m antsearch.scenario $(SCENARIO) --log output/scenarios/$(basename $(notdir $(SCENARIO))).jsonl
+
 test: ## Unit and science tests: everything that doesn't need a running stack
 	$(PYTEST) -m "not integration"
 
-test-unit: ## Fast tests only: coordinator, worker, package
+test-unit: ## Fast tests only: coordinator, worker, submit, scenarios, package
 	$(PYTEST) -m "not science and not integration"
 
 test-science: ## Light-curve pipeline tests (synthetic data, no network)
@@ -52,7 +57,7 @@ test-science: ## Light-curve pipeline tests (synthetic data, no network)
 
 test-integration: ## Start a throwaway stack on port 8001, test it over HTTP, then tear it down
 	$(IT_COMPOSE) up --build -d --wait
-	ANTSEARCH_URL=http://localhost:$(IT_PORT) $(PYTEST) -m integration; \
+	ANTSEARCH_URL=http://localhost:$(IT_PORT) ANTSEARCH_COMPOSE_PROJECT=antsearch-it $(PYTEST) -m integration; \
 		status=$$?; $(IT_COMPOSE) down -v; exit $$status
 
 test-all: test test-integration ## Every test, including integration
