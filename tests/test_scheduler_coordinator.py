@@ -9,7 +9,7 @@ from redis.commands.core import ListCommands
 
 from antsearch import coordinator
 from antsearch.coordinator import PENDING_KEY, create_app
-from antsearch.scheduler import RoundRobinScheduler
+from antsearch.scheduler import GreedyScheduler, RandomScheduler, RoundRobinScheduler
 from antsearch.worker import register, run_tasks, simulated_task
 
 
@@ -140,9 +140,71 @@ def test_main_enables_round_robin(monkeypatch):
     coordinator.main()
 
 
-def test_two_worker_loops_finish_50_tasks():
+@pytest.mark.parametrize("name, expected", [("random", RandomScheduler), ("greedy", GreedyScheduler)])
+def test_main_uses_the_scheduler_named_in_the_environment(monkeypatch, name, expected):
+    monkeypatch.setattr(coordinator.redis.Redis, "from_url", lambda url, **kwargs: fakeredis.FakeRedis(decode_responses=True))
+    monkeypatch.setattr(coordinator.uvicorn, "run", lambda app, **kwargs: None)
+    used = []
+    monkeypatch.setattr(coordinator, "create_app", lambda client, **kwargs: used.append(kwargs["scheduler"]))
+    monkeypatch.setenv("SCHEDULER", name)
+    monkeypatch.setenv("SCHEDULER_SEED", "4")
+
+    coordinator.main()
+
+    assert isinstance(used[0], expected)
+
+
+def test_main_rejects_an_unknown_scheduler(monkeypatch):
+    monkeypatch.setenv("SCHEDULER", "ant")
+
+    with pytest.raises(ValueError, match="unknown SCHEDULER"):
+        coordinator.main()
+
+
+def baseline_cluster(scheduler):
+    client = TestClient(create_app(fakeredis.FakeRedis(decode_responses=True), scheduler=scheduler))
+    for worker in ["worker1", "worker2"]:
+        client.post("/workers/register", json={"worker_id": worker})
+    return client
+
+
+def test_random_choice_survives_between_requests_through_the_coordinator():
+    client = baseline_cluster(RandomScheduler(seed=1))
+    client.post("/tasks", json={"star_ids": ["star1"]})
+
+    # Whichever worker wasn't chosen keeps getting 204, however often it asks; the other gets the task.
+    answers = {worker: [client.post("/tasks/request", json={"worker_id": worker}).status_code for _ in range(5)]
+               for worker in ["worker1", "worker2"]}
+
+    assert sorted(answers.values()) == sorted([[204] * 5, [200, 204, 204, 204, 204]])
+
+
+def test_greedy_learns_speeds_from_results_through_the_coordinator():
+    client = baseline_cluster(GreedyScheduler())
+    client.post("/tasks", json={"star_ids": ["star1", "star2", "star3"]})
+    assert client.post("/tasks/request", json={"worker_id": "worker1"}).json()["task_id"] == "t1"
+    assert client.post("/tasks/request", json={"worker_id": "worker2"}).json()["task_id"] == "t2"
+    client.post("/tasks/t1/result", json={"worker_id": "worker1", "result": {"compute_seconds": 9}})
+    client.post("/tasks/t2/result", json={"worker_id": "worker2", "result": {"compute_seconds": 1}})
+
+    assert client.post("/tasks/request", json={"worker_id": "worker1"}).status_code == 204
+    assert client.post("/tasks/request", json={"worker_id": "worker2"}).json()["task_id"] == "t3"
+
+
+def test_greedy_ignores_a_garbage_result_without_failing_the_request():
+    client = baseline_cluster(GreedyScheduler())
+    client.post("/tasks", json={"star_ids": ["star1"]})
+    client.post("/tasks/request", json={"worker_id": "worker1"})
+
+    response = client.post("/tasks/t1/result", json={"worker_id": "worker1", "result": {"compute_seconds": "fast"}})
+
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("make", [RoundRobinScheduler, RandomScheduler, GreedyScheduler], ids=["round-robin", "random", "greedy"])
+def test_two_worker_loops_finish_50_tasks(make):
     database = fakeredis.FakeRedis(decode_responses=True)
-    app = create_app(database, scheduler=RoundRobinScheduler())
+    app = create_app(database, scheduler=make())
     stop = threading.Event()
 
     def worker(worker_id):
