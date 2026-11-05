@@ -124,7 +124,8 @@ def test_only_accepted_results_reach_scheduler():
         assert RecordingScheduler.results == [("worker1", {"period": 1})]
 
 
-def test_main_enables_round_robin(monkeypatch):
+def test_main_enables_round_robin(monkeypatch, tmp_path):
+    monkeypatch.setenv("RUN_LOG_DIR", str(tmp_path))
     database = fakeredis.FakeRedis(decode_responses=True)
     monkeypatch.setattr(coordinator.redis.Redis, "from_url", lambda url, **kwargs: database)
 
@@ -141,7 +142,8 @@ def test_main_enables_round_robin(monkeypatch):
 
 
 @pytest.mark.parametrize("name, expected", [("random", RandomScheduler), ("greedy", GreedyScheduler)])
-def test_main_uses_the_scheduler_named_in_the_environment(monkeypatch, name, expected):
+def test_main_uses_the_scheduler_named_in_the_environment(monkeypatch, tmp_path, name, expected):
+    monkeypatch.setenv("RUN_LOG_DIR", str(tmp_path))
     monkeypatch.setattr(coordinator.redis.Redis, "from_url", lambda url, **kwargs: fakeredis.FakeRedis(decode_responses=True))
     monkeypatch.setattr(coordinator.uvicorn, "run", lambda app, **kwargs: None)
     used = []

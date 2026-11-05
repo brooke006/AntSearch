@@ -31,6 +31,9 @@ services:
       HEARTBEAT_TIMEOUT: ${HEARTBEAT_TIMEOUT:-30}
       SCHEDULER: ${SCHEDULER:-round-robin}
       SCHEDULER_SEED: ${SCHEDULER_SEED:-}
+      RUN_LOG_DIR: /runs
+    volumes:
+      - ${RUN_LOG_DIR:-./output/runs}:/runs
     ports:
       - "${ANTSEARCH_PORT:-8000}:8000"
     depends_on:

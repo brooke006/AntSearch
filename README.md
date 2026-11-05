@@ -33,8 +33,9 @@ The [Makefile](Makefile) wraps the common commands. Run `make` on its own to lis
 | `make logs` / `make ps` | Follow the cluster's logs / list its containers |
 | `make submit` | Queue the first 50 stars of the TESS list on the cluster and wait for the results (`STARS=...` for another count) |
 | `make scenario` | Run a failure scenario on the cluster (`SCENARIO=scenarios/slow-worker.yaml`); see [Failure scenarios](#failure-scenarios) |
+| `make metrics` | Completion time, throughput and wasted work of the newest run (`RUN=output/runs/<run>.jsonl` for another); see [Run logs and metrics](#run-logs-and-metrics) |
 | `make test` | Unit and science tests (everything that doesn't need Docker) |
-| `make test-unit` | Fast tests only: coordinator, worker, submit, scenarios, package |
+| `make test-unit` | Fast tests only: coordinator, worker, submit, scenarios, run logs, package |
 | `make test-science` | Light-curve pipeline tests |
 | `make test-integration` | Start a throwaway cluster, test it over HTTP, tear it down |
 | `make test-all` | `test` plus `test-integration` |
@@ -156,6 +157,42 @@ Some things to know:
 
 Exit status: 0 if every event applied, 1 if some failed (each is logged with its error and the scenario carries on), 3 if the workers couldn't be reached (is the cluster up?).
 
+## Run logs and metrics
+
+Each run writes one log file, `output/runs/<start time>-<scheduler>.jsonl`, and `make metrics` computes the results from it:
+
+```bash
+SCHEDULER=greedy make up
+make submit
+make metrics
+make down
+```
+
+A run lasts from `make up` to `make down`. The run's name is kept in Redis, so a coordinator that restarts mid-run carries on with the same file, and `make down` clears it so the next `make up` starts a new one. Run `make down` before changing `SCHEDULER`, or one log will mix two schedulers (`make metrics` warns if it does). Set `RUN_LOG_DIR` to keep the logs somewhere else; a path for `make up` needs to start with `./` or `/`.
+
+The coordinator writes one JSON line per event, with `time` in Unix seconds on its own clock:
+
+| `event` | Other fields |
+|---|---|
+| `coordinator_started` | `scheduler`, `seed`, `heartbeat_timeout` |
+| `worker_registered`, `worker_online` | `worker_id` |
+| `worker_offline` | `worker_id`, `last_heartbeat` |
+| `task_queued` | `task_id`, `star_id` |
+| `task_assigned` | `task_id`, `star_id`, `worker_id` |
+| `task_done` | `task_id`, `worker_id`, `result` (a failed run's result has an `error` key) |
+| `task_requeued` | `task_id`, `worker_id`, `reason` (`offline` or `reregistered`), `last_heartbeat` |
+| `result_rejected` | `task_id`, `worker_id`, `status`, `result` |
+
+The metrics:
+
+- **Completion time:** from the first task queued to the last task finished. `make metrics` also shows the mean turnaround, the same measure for each task on its own. With a full queue the schedulers have about the same choices, so to compare them, queue tasks gradually and look at turnaround.
+- **Throughput:** tasks that succeeded per minute of completion time. Failed runs don't count, so a worker that fails quickly can't look fast.
+- **Wasted work:** worker time that produced no answer, measured from assignment. For a task taken from a worker, that's up to the worker's last heartbeat, or up to its result if it turns out to be alive and reports late. For a failed run, it's up to the error result. It's shown as seconds and as a share of all worker time, with lost and failed work listed separately.
+
+Times are spans on the coordinator's clock rather than what workers report, so they work for failed runs and don't depend on the workers' clocks. They include time on the network.
+
+On Linux, the coordinator container's user (UID 1000) must be able to write to the log directory. `make up` creates it as you; `docker compose up` on its own would create it as root, and the coordinator would exit with a permission error.
+
 ## Coordinator API
 
 Workers and tasks are stored in Redis under `antsearch:` keys (the layout is described at the top of [coordinator.py](src/antsearch/coordinator.py)), so the coordinator can restart without losing them. Scheduler state (the round-robin position, the random choice, the greedy estimates) is kept in memory and starts over when the coordinator restarts. Run one coordinator process.
@@ -237,7 +274,9 @@ For workers, the same search is packaged as `pipeline.run_task(star_id)`, which 
 AntSearch/
 ├── src/antsearch/
 │   ├── coordinator.py  # FastAPI coordinator: workers, heartbeats, task queue, results (Redis)
+│   ├── metrics.py      # completion time, throughput and wasted work from a run log
 │   ├── pipeline.py     # transit search: download, flatten, BLS, folded plot; run_task() for workers
+│   ├── runlog.py       # run log: one JSON line per assignment, result and failure
 │   ├── scenario.py     # failure scenarios: CPU limits, network delay, kills and restarts on a timeline
 │   ├── submit.py       # queue stars from a star list and wait for the results
 │   ├── worker.py       # worker: registers, heartbeats, pulls tasks, runs them, reports results
