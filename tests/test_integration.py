@@ -23,6 +23,7 @@ pytestmark = pytest.mark.integration
 
 URL = os.environ.get("ANTSEARCH_URL")
 PROJECT = os.environ.get("ANTSEARCH_COMPOSE_PROJECT")
+RUN_LOG_DIR = os.environ.get("ANTSEARCH_RUN_LOG_DIR")
 if not URL:
     pytest.skip("ANTSEARCH_URL not set; run make test-integration", allow_module_level=True)
 
@@ -114,6 +115,40 @@ def test_silent_worker_goes_offline_and_another_worker_finishes_its_task(api):
     (task,) = wait_until_done(api, [task_id])
     assert task["worker_id"] in {"worker-1", "worker-2"}
     assert workers(api)["worker-1"]["status"] == "online"
+
+
+@pytest.mark.skipif(not RUN_LOG_DIR, reason="ANTSEARCH_RUN_LOG_DIR not set; run make test-integration")
+def test_run_log_records_a_lost_task_and_metrics_count_it_as_wasted(api):
+    from antsearch.metrics import compute, newest_log
+    from antsearch.runlog import read_events
+
+    worker_id, timeout = new_worker(api)
+    if timeout > 10:
+        pytest.skip(f"stack heartbeat timeout is {timeout} s; start it with HEARTBEAT_TIMEOUT=3")
+    task_id = take_task(api, worker_id)
+    wait_for_status(api, worker_id, "offline", timeout=timeout * 3)
+    late = api.post(f"/tasks/{task_id}/result", json={"worker_id": worker_id, "result": {"period": 1.0}})
+    assert late.status_code == 409
+    wait_until_done(api, [task_id])
+
+    events = read_events(newest_log(RUN_LOG_DIR))
+
+    assert events[0]["event"] == "coordinator_started"
+    mine = [e for e in events if e.get("task_id") == task_id]
+    names = [e["event"] for e in mine]
+    for name in ("task_queued", "task_assigned", "task_requeued", "result_rejected", "task_done"):
+        assert name in names, names
+    assert [e["worker_id"] for e in mine if e["event"] == "task_assigned"][0] == worker_id
+    assert {"worker_offline"} <= {e["event"] for e in events if e.get("worker_id") == worker_id}
+    assert [e["time"] for e in mine] == sorted(e["time"] for e in mine)
+
+    metrics = compute(events)
+    assert metrics["late_results"] >= 1
+    assigned = next(e["time"] for e in mine if e["event"] == "task_assigned")
+    reported = next(e["time"] for e in mine if e["event"] == "result_rejected")
+    assert metrics["lost_seconds"] >= reported - assigned  # it reported late, so all that time counts
+    assert metrics["tasks_succeeded"] > 0
+    assert metrics["completion_seconds"] > 0
 
 
 def wait_for_status(api, worker_id, status, timeout):

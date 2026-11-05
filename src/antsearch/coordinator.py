@@ -8,9 +8,12 @@ Redis keys:
     antsearch:task:<id>             hash: star_id, status (pending/assigned/done), worker_id,
                                     assigned_at, completed_at, result (JSON)
     antsearch:task_seq              counter used to number new tasks
+    antsearch:run                   name of this run, and of its log file
 
 A worker that misses heartbeats for longer than the heartbeat timeout is marked offline, and any
 tasks it held go back to the front of the pending queue.
+
+Every assignment, result and failure also goes to the run's log file; see antsearch.runlog.
 """
 
 import asyncio
@@ -22,6 +25,7 @@ import os
 import time
 import threading
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import redis
@@ -29,6 +33,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 
+from antsearch.runlog import NO_RUN_LOG, RunLog
 from antsearch.scheduler import Scheduler, make_scheduler
 
 log = logging.getLogger("antsearch.coordinator")
@@ -36,7 +41,9 @@ log = logging.getLogger("antsearch.coordinator")
 WORKERS_KEY = "antsearch:workers"
 PENDING_KEY = "antsearch:tasks:pending"
 TASK_SEQ_KEY = "antsearch:task_seq"
+RUN_KEY = "antsearch:run"
 DEFAULT_HEARTBEAT_TIMEOUT = 30.0  # seconds
+DEFAULT_RUN_LOG_DIR = "output/runs"
 
 
 def worker_key(worker_id: str) -> str:
@@ -98,7 +105,12 @@ def requeue_tasks(redis_client: redis.Redis, worker_id: str) -> list[str]:
     return task_ids
 
 
-def mark_offline(redis_client: redis.Redis, now: float, timeout: float) -> list[str]:
+def record_requeued(run_log: RunLog, task_ids: list[str], worker_id: str, reason: str, last_heartbeat: float) -> None:
+    for task_id in task_ids:
+        run_log.record("task_requeued", task_id=task_id, worker_id=worker_id, reason=reason, last_heartbeat=last_heartbeat)
+
+
+def mark_offline(redis_client: redis.Redis, now: float, timeout: float, run_log: RunLog = NO_RUN_LOG) -> list[str]:
     """Mark online workers with no heartbeat in the last `timeout` seconds as offline.
 
     Their tasks are requeued. Returns the IDs of the workers that were marked offline.
@@ -116,7 +128,7 @@ def mark_offline(redis_client: redis.Redis, now: float, timeout: float) -> list[
             return None
         task_ids = _queue_requeue(pipe, worker_id)
         pipe.hset(worker_key(worker_id), "status", "offline")
-        return now - float(last_heartbeat), task_ids
+        return float(last_heartbeat), task_ids
 
     marked = []
     for worker_id in sorted(redis_client.smembers(WORKERS_KEY)):
@@ -128,8 +140,10 @@ def mark_offline(redis_client: redis.Redis, now: float, timeout: float) -> list[
         )
         if outcome is None:
             continue
-        silent_for, task_ids = outcome
-        log.warning("worker %s missed heartbeats for %.0f s; marked offline", worker_id, silent_for)
+        last_heartbeat, task_ids = outcome
+        log.warning("worker %s missed heartbeats for %.0f s; marked offline", worker_id, now - last_heartbeat)
+        run_log.record("worker_offline", worker_id=worker_id, last_heartbeat=last_heartbeat)
+        record_requeued(run_log, task_ids, worker_id, "offline", last_heartbeat)
         if task_ids:
             log.info("requeued tasks %s from worker %s", ", ".join(task_ids), worker_id)
         marked.append(worker_id)
@@ -142,6 +156,7 @@ def create_app(
     sweep_interval: float | None = None,
     clock: Callable[[], float] = time.time,
     scheduler: Scheduler | None = None,
+    run_log: RunLog = NO_RUN_LOG,
 ) -> FastAPI:
     """Build the coordinator app.
 
@@ -155,7 +170,7 @@ def create_app(
     scheduler_lock = threading.Lock()
 
     def sweep() -> list[str]:
-        return mark_offline(redis_client, clock(), heartbeat_timeout)
+        return mark_offline(redis_client, clock(), heartbeat_timeout, run_log)
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -184,12 +199,15 @@ def create_app(
     def register(registration: Registration):
         worker_id = registration.worker_id
         # A worker that restarts loses whatever it was running, so hand those tasks to someone else.
-        requeue_tasks(redis_client, worker_id)
+        last_heartbeat = redis_client.hget(worker_key(worker_id), "last_heartbeat")
+        task_ids = requeue_tasks(redis_client, worker_id)
+        record_requeued(run_log, task_ids, worker_id, "reregistered", float(last_heartbeat or 0))
         now = clock()
         redis_client.sadd(WORKERS_KEY, worker_id)
         redis_client.hset(
             worker_key(worker_id), mapping={"status": "online", "registered_at": now, "last_heartbeat": now}
         )
+        run_log.record("worker_registered", worker_id=worker_id)
         log.info("registered worker %s", worker_id)
         return {"worker_id": worker_id, "registered": True, "heartbeat_timeout": heartbeat_timeout}
 
@@ -198,6 +216,7 @@ def create_app(
         worker = require_worker(worker_id)
         redis_client.hset(worker_key(worker_id), mapping={"status": "online", "last_heartbeat": clock()})
         if worker["status"] == "offline":
+            run_log.record("worker_online", worker_id=worker_id)
             log.info("worker %s is back online", worker_id)
         return {"worker_id": worker_id, "status": "online"}
 
@@ -223,6 +242,8 @@ def create_app(
         for star_id in new_tasks.star_ids:
             task_id = f"t{redis_client.incr(TASK_SEQ_KEY)}"
             redis_client.hset(task_key(task_id), mapping={"star_id": star_id, "status": "pending"})
+            # Recorded before the push, since a worker can take the task as soon as it's on the queue.
+            run_log.record("task_queued", task_id=task_id, star_id=star_id)
             redis_client.rpush(PENDING_KEY, task_id)
             task_ids.append(task_id)
         log.info("queued %d tasks", len(task_ids))
@@ -273,6 +294,7 @@ def create_app(
                     continue
         if task_id is None:
             return Response(status_code=204)
+        run_log.record("task_assigned", task_id=task_id, star_id=star_id, worker_id=worker_id)
         log.info("assigned task %s (star %s) to worker %s", task_id, star_id, worker_id)
         return {"task_id": task_id, "star_id": star_id}
 
@@ -292,6 +314,9 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"unknown task {task_id!r}")
         if task["status"] != "assigned" or task.get("worker_id") != submission.worker_id:
             # e.g. the worker was marked offline and the task went back on the queue
+            run_log.record(
+                "result_rejected", task_id=task_id, worker_id=submission.worker_id, status=task["status"], result=submission.result
+            )
             raise HTTPException(status_code=409, detail=f"task {task_id!r} is not assigned to {submission.worker_id!r}")
         redis_client.hset(
             task_key(task_id),
@@ -301,6 +326,7 @@ def create_app(
         with scheduler_lock:
             if active_scheduler is not None:
                 active_scheduler.on_result(submission.worker_id, submission.result)
+        run_log.record("task_done", task_id=task_id, worker_id=submission.worker_id, result=submission.result)
         log.info("task %s done by worker %s", task_id, submission.worker_id)
         return {"task_id": task_id, "status": "done"}
 
@@ -316,6 +342,17 @@ async def sweep_forever(sweep: Callable[[], list[str]], interval: float) -> None
             log.error("heartbeat check failed: %s", exc)
 
 
+def open_run_log(redis_client: redis.Redis, directory: str | Path, scheduler_name: str, clock: Callable[[], float] = time.time) -> RunLog:
+    """Open this run's log in directory, one file per run.
+
+    The run is named once and the name kept in Redis, so a coordinator restarted mid-run carries on
+    with the same file, and a fresh Redis (make down, then make up) starts a new one.
+    """
+    started = time.strftime("%Y%m%d-%H%M%S", time.gmtime(clock()))
+    redis_client.set(RUN_KEY, f"{started}-{scheduler_name}", nx=True)
+    return RunLog(Path(directory) / f"{redis_client.get(RUN_KEY)}.jsonl", clock)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
@@ -325,8 +362,11 @@ def main() -> None:
     scheduler = make_scheduler(scheduler_name, int(seed) if seed else None)
     log.info("using the %s scheduler", scheduler_name)
     client = redis.Redis.from_url(redis_url, decode_responses=True)
+    run_log = open_run_log(client, os.environ.get("RUN_LOG_DIR") or DEFAULT_RUN_LOG_DIR, scheduler_name)
+    run_log.record("coordinator_started", scheduler=scheduler_name, seed=int(seed) if seed else None, heartbeat_timeout=timeout)
+    log.info("writing the run log to %s", run_log.path)
     uvicorn.run(
-        create_app(client, heartbeat_timeout=timeout, sweep_interval=timeout / 3, scheduler=scheduler),
+        create_app(client, heartbeat_timeout=timeout, sweep_interval=timeout / 3, scheduler=scheduler, run_log=run_log),
         host=os.environ.get("COORDINATOR_HOST", "127.0.0.1"),
         port=int(os.environ.get("COORDINATOR_PORT", "8000")),
     )

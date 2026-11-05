@@ -7,16 +7,18 @@ PYTEST  := $(PYTHON) -m pytest
 
 STARS   ?= 50
 SCENARIO ?=
+RUN     ?=
 
 # Integration tests get their own compose project, port and a short heartbeat timeout,
 # so they never touch a dev stack started with `make up`. Their workers run simulated tasks
 # instead of downloading from MAST.
 IT_PORT    ?= 8001
-IT_COMPOSE := ANTSEARCH_PORT=$(IT_PORT) HEARTBEAT_TIMEOUT=3 WORKER_TASK=simulated SIMULATED_TASK_SECONDS=0.2 \
+IT_RUNS    := ./output/runs-it
+IT_COMPOSE := ANTSEARCH_PORT=$(IT_PORT) RUN_LOG_DIR=$(IT_RUNS) HEARTBEAT_TIMEOUT=3 WORKER_TASK=simulated SIMULATED_TASK_SECONDS=0.2 \
 	POLL_INTERVAL=0.5 $(COMPOSE) -p antsearch-it
 
 .DEFAULT_GOAL := help
-.PHONY: help install build up down logs ps submit scenario test test-unit test-science test-integration test-all coverage clean
+.PHONY: help install build up down logs ps submit scenario metrics test test-unit test-science test-integration test-all coverage clean
 
 help: ## Show this list
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  %-18s %s\n", $$1, $$2}'
@@ -28,6 +30,7 @@ build: ## Build the Docker image (IMAGE=antsearch:dev)
 	docker build -t $(IMAGE) .
 
 up: ## Start redis, the coordinator and two workers in the background on http://localhost:8000
+	mkdir -p $${RUN_LOG_DIR:-output/runs}
 	$(COMPOSE) up --build -d --wait
 
 down: ## Stop the stack started by `make up`
@@ -46,18 +49,23 @@ scenario: ## Run a failure scenario on the stack, e.g. SCENARIO=scenarios/slow-w
 	@test -n "$(SCENARIO)" || { echo "usage: make scenario SCENARIO=scenarios/<name>.yaml"; exit 2; }
 	$(PYTHON) -m antsearch.scenario $(SCENARIO) --log output/scenarios/$(basename $(notdir $(SCENARIO))).jsonl
 
+metrics: ## Completion time, throughput and wasted work of the newest run, or of RUN=output/runs/<run>.jsonl
+	$(PYTHON) -m antsearch.metrics $(RUN)
+
 test: ## Unit and science tests: everything that doesn't need a running stack
 	$(PYTEST) -m "not integration"
 
-test-unit: ## Fast tests only: coordinator, worker, submit, scenarios, package
+test-unit: ## Fast tests only: coordinator, worker, submit, scenarios, run logs, package
 	$(PYTEST) -m "not science and not integration"
 
 test-science: ## Light-curve pipeline tests (synthetic data, no network)
 	$(PYTEST) -m science
 
 test-integration: ## Start a throwaway stack on port 8001, test it over HTTP, then tear it down
+	mkdir -p $(IT_RUNS)
+	rm -f $(IT_RUNS)/*.jsonl
 	$(IT_COMPOSE) up --build -d --wait
-	ANTSEARCH_URL=http://localhost:$(IT_PORT) ANTSEARCH_COMPOSE_PROJECT=antsearch-it $(PYTEST) -m integration; \
+	ANTSEARCH_URL=http://localhost:$(IT_PORT) ANTSEARCH_COMPOSE_PROJECT=antsearch-it ANTSEARCH_RUN_LOG_DIR=$(IT_RUNS) $(PYTEST) -m integration; \
 		status=$$?; $(IT_COMPOSE) down -v; exit $$status
 
 test-all: test test-integration ## Every test, including integration
