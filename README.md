@@ -35,7 +35,7 @@ The [Makefile](Makefile) wraps the common commands. Run `make` on its own to lis
 | `make scenario` | Run a failure scenario on the cluster (`SCENARIO=scenarios/slow-worker.yaml`); see [Failure scenarios](#failure-scenarios) |
 | `make metrics` | Completion time, throughput and wasted work of the newest run (`RUN=output/runs/<run>.jsonl` for another); see [Run logs and metrics](#run-logs-and-metrics) |
 | `make test` | Unit and science tests (everything that doesn't need Docker) |
-| `make test-unit` | Fast tests only: coordinator, worker, submit, scenarios, run logs, package |
+| `make test-unit` | Fast tests only: coordinator, worker, submit, scenarios, run logs, pheromone table, package |
 | `make test-science` | Light-curve pipeline tests |
 | `make test-integration` | Start a throwaway cluster, test it over HTTP, tear it down |
 | `make test-all` | `test` plus `test-integration` |
@@ -48,7 +48,7 @@ Tests come in three types, selected with pytest markers:
 
 | Type | Command | Covers | Needs |
 |---|---|---|---|
-| Unit | `make test-unit` | Coordinator endpoints (against [fakeredis](https://github.com/cunla/fakeredis-py)), the worker loop, the submit script, failure scenarios (against a fake Docker and clock), two in-process workers processing 50 stars, package | Nothing; takes seconds |
+| Unit | `make test-unit` | Coordinator endpoints (against [fakeredis](https://github.com/cunla/fakeredis-py)), the worker loop, the submit script, failure scenarios (against a fake Docker and clock), the pheromone table, two in-process workers processing 50 stars, package | Nothing; takes seconds |
 | Science | `make test-science` | Pipeline: flatten, BLS, plotting, `run_task`, download retries and exit codes, using a synthetic light curve and faked MAST errors | The `science` extra (skipped without it); no network |
 | Integration | `make test-integration` | The real cluster over HTTP: real Redis, the two worker containers processing 50 tasks, a full task round trip, a silent worker going offline and its task finished by another, a failure scenario slowing, killing and restarting a worker on schedule | Docker |
 
@@ -238,6 +238,17 @@ curl -X POST localhost:8000/tasks/t1/result -H 'content-type: application/json' 
 curl localhost:8000/tasks/t1
 ```
 
+### Pheromone table
+
+The ant colony scheduler will keep its scores in a pheromone table ([pheromone.py](src/antsearch/pheromone.py)): one level for each worker and task type, recording how well that worker handles that kind of star. The levels are stored in Redis, one hash per task type (`antsearch:pheromone:short` and `antsearch:pheromone:multi_sector`, mapping worker ID to level), so they survive a coordinator restart. `make down` clears them along with everything else in Redis.
+
+| Task type | Stars with |
+|---|---|
+| `short` | One TESS sector or none (`num_sectors` ≤ 1 in the star list) |
+| `multi_sector` | Two or more sectors |
+
+`PheromoneTable(redis_client)` gives `get(worker, type)`, `levels(type, workers)` for a set of workers in one round trip, `set`, `add` (atomic in Redis, so deposits that arrive together all count), `table()`, `forget_worker` and `clear`. A pair that hasn't been written yet reads as the initial level (1.0 by default). The table only stores levels. Assigning tasks by pheromone and the deposit and evaporation rules come later.
+
 ## Running the science check
 
 `antsearch.pipeline` downloads one TESS light curve from MAST, flattens it, runs Box Least Squares and saves a phase-folded plot of the transit. By default it uses WASP-18 b (TESS sector 2, known period 0.94145 days):
@@ -275,6 +286,7 @@ AntSearch/
 ├── src/antsearch/
 │   ├── coordinator.py  # FastAPI coordinator: workers, heartbeats, task queue, results (Redis)
 │   ├── metrics.py      # completion time, throughput and wasted work from a run log
+│   ├── pheromone.py    # pheromone table: a level per worker and task type, stored in Redis
 │   ├── pipeline.py     # transit search: download, flatten, BLS, folded plot; run_task() for workers
 │   ├── runlog.py       # run log: one JSON line per assignment, result and failure
 │   ├── scenario.py     # failure scenarios: CPU limits, network delay, kills and restarts on a timeline

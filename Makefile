@@ -55,7 +55,7 @@ metrics: ## Completion time, throughput and wasted work of the newest run, or of
 test: ## Unit and science tests: everything that doesn't need a running stack
 	$(PYTEST) -m "not integration"
 
-test-unit: ## Fast tests only: coordinator, worker, submit, scenarios, run logs, package
+test-unit: ## Fast tests only: coordinator, worker, submit, scenarios, run logs, pheromone table, package
 	$(PYTEST) -m "not science and not integration"
 
 test-science: ## Light-curve pipeline tests (synthetic data, no network)

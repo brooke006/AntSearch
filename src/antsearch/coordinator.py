@@ -9,6 +9,8 @@ Redis keys:
                                     assigned_at, completed_at, result (JSON)
     antsearch:task_seq              counter used to number new tasks
     antsearch:run                   name of this run, and of its log file
+    antsearch:pheromone:<type>      hash: worker ID -> pheromone level for that task type
+                                    (see antsearch.pheromone)
 
 A worker that misses heartbeats for longer than the heartbeat timeout is marked offline, and any
 tasks it held go back to the front of the pending queue.
