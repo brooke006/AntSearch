@@ -31,6 +31,8 @@ services:
       HEARTBEAT_TIMEOUT: ${HEARTBEAT_TIMEOUT:-30}
       SCHEDULER: ${SCHEDULER:-round-robin}
       SCHEDULER_SEED: ${SCHEDULER_SEED:-}
+      SCHEDULER_ALPHA: ${SCHEDULER_ALPHA:-}
+      SCHEDULER_BETA: ${SCHEDULER_BETA:-}
       RUN_LOG_DIR: /runs
     volumes:
       - ${RUN_LOG_DIR:-./output/runs}:/runs
