@@ -174,7 +174,7 @@ The coordinator writes one JSON line per event, with `time` in Unix seconds on i
 
 | `event` | Other fields |
 |---|---|
-| `coordinator_started` | `scheduler`, `seed`, `heartbeat_timeout` |
+| `coordinator_started` | `scheduler`, `seed`, `heartbeat_timeout`, and `alpha` and `beta` for the ant scheduler |
 | `worker_registered`, `worker_online` | `worker_id` |
 | `worker_offline` | `worker_id`, `last_heartbeat` |
 | `task_queued` | `task_id`, `star_id` |
@@ -195,14 +195,14 @@ On Linux, the coordinator container's user (UID 1000) must be able to write to t
 
 ## Coordinator API
 
-Workers and tasks are stored in Redis under `antsearch:` keys (the layout is described at the top of [coordinator.py](src/antsearch/coordinator.py)), so the coordinator can restart without losing them. Scheduler state (the round-robin position, the random choice, the greedy estimates) is kept in memory and starts over when the coordinator restarts. Run one coordinator process.
+Workers and tasks are stored in Redis under `antsearch:` keys (the layout is described at the top of [coordinator.py](src/antsearch/coordinator.py)), so the coordinator can restart without losing them. Scheduler state (the round-robin position, the random choice, the greedy and ant speed estimates) is kept in memory and starts over when the coordinator restarts; the ant scheduler's pheromone table is in Redis and survives it. Run one coordinator process.
 
 | Endpoint | Body | Response |
 |---|---|---|
 | `POST /workers/register` | `{"worker_id": "w1"}` | `{"worker_id", "registered": true, "heartbeat_timeout"}` |
 | `POST /workers/{id}/heartbeat` | none | `{"worker_id", "status": "online"}`; 404 if not registered |
 | `GET /workers` | none | Every worker with its status, last heartbeat and assigned tasks |
-| `POST /tasks` | `{"star_ids": ["WASP-18", ...]}` | 201, `{"task_ids": ["t1", ...]}` |
+| `POST /tasks` | `{"star_ids": ["WASP-18", ...]}`, optionally with `"num_sectors": [2, ...]`, one per star, to set each task's type | 201, `{"task_ids": ["t1", ...]}`; 422 if `num_sectors` doesn't match `star_ids` |
 | `POST /tasks/request` | `{"worker_id": "w1"}` | `{"task_id", "star_id"}`; 204 if no task is available for this worker; 404 if not registered; 409 if offline |
 | `POST /tasks/{id}/result` | `{"worker_id": "w1", "result": {...}}` | `{"task_id", "status": "done"}`; 409 if the task isn't assigned to that worker |
 | `GET /tasks/{id}` | none | The task's star, status, worker, timestamps and result |
@@ -221,10 +221,21 @@ Set `SCHEDULER` to choose one, for example `SCHEDULER=greedy make up`:
 | `round-robin` (default) | The next available worker in worker-ID order |
 | `random` | An available worker chosen uniformly at random. Set `SCHEDULER_SEED` to an integer to repeat the same sequence of choices |
 | `greedy` | The available worker with the shortest estimated task time |
+| `ant` | An available worker chosen at random, weighted by its pheromone for the task's type and its recent speed (Ant System). `SCHEDULER_ALPHA` and `SCHEDULER_BETA` set the weights; `SCHEDULER_SEED` works as for `random` |
 
-"Available" means online with no running task, so a slower worker still gets work while a faster one is busy. All three make a worker that isn't chosen wait: it gets 204 and asks again after its polling interval.
+"Available" means online with no running task, so a slower worker still gets work while a faster one is busy. All of them make a worker that isn't chosen wait: it gets 204 and asks again after its polling interval.
 
 The greedy estimate is a moving average of `download_seconds + compute_seconds` from a worker's results. Workers with no result yet go first, so each one gets measured, and workers whose results have all failed go last. Simulated tasks all report the same `compute_seconds`, so greedy sees no difference between simulated workers and always prefers the lowest worker ID.
+
+The ant scheduler gives each available worker a chance of
+
+```
+pheromone ** alpha * speed ** beta / (the same, summed over the available workers)
+```
+
+`pheromone` is the worker's level in the [pheromone table](#pheromone-table) for the type of the task at the front of the queue, and `speed` is 1 / its estimated task time, the same moving average greedy uses. `alpha` (`SCHEDULER_ALPHA`, default 1) sets how much the learned pheromone counts, and `beta` (`SCHEDULER_BETA`, default 2) how much the current speed counts. With both at 0 the choice is uniform, like `random`. A slower worker keeps a smaller but non-zero chance, so it is still tried now and then. A worker with no timed result yet counts as fast as the fastest measured one, so new workers get tried; one whose results have all failed counts as slow as the slowest. Like `random`, the choice stands until that worker asks, so polling more often doesn't win more tasks. The run log's `coordinator_started` line records `alpha` and `beta` for an ant run.
+
+Nothing raises the pheromone levels yet, so for now they all stay at 1 and only speed decides; deposit and evaporation come in a later change. Simulated workers all report the same time, so between them the ant scheduler's choice is uniform.
 
 **Joining and leaving.** A worker joins by registering. If it sends no heartbeat for longer than the timeout, the coordinator marks it `offline`. A background check runs every third of the timeout, and `GET /workers` and `POST /tasks/request` also check first. When a worker is marked offline, its unfinished tasks go back to the front of the queue for another worker. An offline worker gets 409 on task requests and result submissions until it sends a heartbeat or registers again. A worker that registers again after a restart gives up any tasks it held, since it lost them in the restart.
 
@@ -240,14 +251,16 @@ curl localhost:8000/tasks/t1
 
 ### Pheromone table
 
-The ant colony scheduler will keep its scores in a pheromone table ([pheromone.py](src/antsearch/pheromone.py)): one level for each worker and task type, recording how well that worker handles that kind of star. The levels are stored in Redis, one hash per task type (`antsearch:pheromone:short` and `antsearch:pheromone:multi_sector`, mapping worker ID to level), so they survive a coordinator restart. `make down` clears them along with everything else in Redis.
+The ant scheduler keeps its scores in a pheromone table ([pheromone.py](src/antsearch/pheromone.py)): one level for each worker and task type, recording how well that worker handles that kind of star. The levels are stored in Redis, one hash per task type (`antsearch:pheromone:short` and `antsearch:pheromone:multi_sector`, mapping worker ID to level), so they survive a coordinator restart. `make down` clears them along with everything else in Redis.
 
 | Task type | Stars with |
 |---|---|
 | `short` | One TESS sector or none (`num_sectors` ≤ 1 in the star list) |
 | `multi_sector` | Two or more sectors |
 
-`PheromoneTable(redis_client)` gives `get(worker, type)`, `levels(type, workers)` for a set of workers in one round trip, `set`, `add` (atomic in Redis, so deposits that arrive together all count), `table()`, `forget_worker` and `clear`. A pair that hasn't been written yet reads as the initial level (1.0 by default). The table only stores levels. Assigning tasks by pheromone and the deposit and evaporation rules come later.
+`PheromoneTable(redis_client)` gives `get(worker, type)`, `levels(type, workers)` for a set of workers in one round trip, `set`, `add` (atomic in Redis, so deposits that arrive together all count), `table()`, `forget_worker` and `clear`. A pair that hasn't been written yet reads as the initial level (1.0 by default). The table only stores levels: the `ant` scheduler reads them, and the deposit and evaporation rules come later.
+
+A task gets its type from the `num_sectors` it was queued with; `make submit` sends them from the star list's `num_sectors` column. A task queued without one counts as `short`, which is also what the transit search actually runs today: it searches only the star's first sector.
 
 ## Running the science check
 

@@ -9,7 +9,8 @@ from redis.commands.core import ListCommands
 
 from antsearch import coordinator
 from antsearch.coordinator import PENDING_KEY, create_app
-from antsearch.scheduler import GreedyScheduler, RandomScheduler, RoundRobinScheduler
+from antsearch.pheromone import PheromoneTable
+from antsearch.scheduler import AntScheduler, GreedyScheduler, RandomScheduler, RoundRobinScheduler
 from antsearch.worker import register, run_tasks, simulated_task
 
 
@@ -157,7 +158,7 @@ def test_main_uses_the_scheduler_named_in_the_environment(monkeypatch, tmp_path,
 
 
 def test_main_rejects_an_unknown_scheduler(monkeypatch):
-    monkeypatch.setenv("SCHEDULER", "ant")
+    monkeypatch.setenv("SCHEDULER", "fifo")
 
     with pytest.raises(ValueError, match="unknown SCHEDULER"):
         coordinator.main()
@@ -203,10 +204,19 @@ def test_greedy_ignores_a_garbage_result_without_failing_the_request():
     assert response.status_code == 200
 
 
-@pytest.mark.parametrize("make", [RoundRobinScheduler, RandomScheduler, GreedyScheduler], ids=["round-robin", "random", "greedy"])
+@pytest.mark.parametrize(
+    "make",
+    [
+        lambda database: RoundRobinScheduler(),
+        lambda database: RandomScheduler(),
+        lambda database: GreedyScheduler(),
+        lambda database: AntScheduler(PheromoneTable(database), coordinator.task_type_lookup(database)),
+    ],
+    ids=["round-robin", "random", "greedy", "ant"],
+)
 def test_two_worker_loops_finish_50_tasks(make):
     database = fakeredis.FakeRedis(decode_responses=True)
-    app = create_app(database, scheduler=make())
+    app = create_app(database, scheduler=make(database))
     stop = threading.Event()
 
     def worker(worker_id):
