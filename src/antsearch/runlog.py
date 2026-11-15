@@ -2,7 +2,7 @@
 
 Every line has a time (Unix seconds on the coordinator's clock) and an event, plus:
 
-    coordinator_started   scheduler, seed, heartbeat_timeout
+    coordinator_started   scheduler, seed, heartbeat_timeout (plus alpha, beta for the ant scheduler)
     worker_registered     worker_id
     worker_offline        worker_id, last_heartbeat
     worker_online         worker_id

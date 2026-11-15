@@ -371,5 +371,5 @@ def test_make_scheduler():
     assert isinstance(make_scheduler("round-robin"), RoundRobinScheduler)
     assert isinstance(make_scheduler("greedy"), GreedyScheduler)
     assert choices(make_scheduler("random", seed=2), WORKERS, 20) == choices(RandomScheduler(seed=2), WORKERS, 20)
-    with pytest.raises(ValueError, match="unknown SCHEDULER 'ant'"):
-        make_scheduler("ant")
+    with pytest.raises(ValueError, match="unknown SCHEDULER 'fifo'"):
+        make_scheduler("fifo")

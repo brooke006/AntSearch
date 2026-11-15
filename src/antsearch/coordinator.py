@@ -6,7 +6,8 @@ Redis keys:
     antsearch:worker:<id>:tasks     set of task IDs currently assigned to that worker
     antsearch:tasks:pending         list of task IDs waiting for a worker, next one first
     antsearch:task:<id>             hash: star_id, status (pending/assigned/done), worker_id,
-                                    assigned_at, completed_at, result (JSON)
+                                    assigned_at, completed_at, result (JSON), and task_type
+                                    (short/multi_sector) if it was queued with a sector count
     antsearch:task_seq              counter used to number new tasks
     antsearch:run                   name of this run, and of its log file
     antsearch:pheromone:<type>      hash: worker ID -> pheromone level for that task type
@@ -35,8 +36,9 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
 
+from antsearch.pheromone import SHORT, PheromoneTable, task_type
 from antsearch.runlog import NO_RUN_LOG, RunLog
-from antsearch.scheduler import Scheduler, make_scheduler
+from antsearch.scheduler import DEFAULT_ALPHA, DEFAULT_BETA, Scheduler, make_scheduler
 
 log = logging.getLogger("antsearch.coordinator")
 
@@ -70,6 +72,8 @@ class TaskRequest(BaseModel):
 
 class NewTasks(BaseModel):
     star_ids: list[str]
+    # Optional: how many TESS sectors each star has, in the same order, which sets each task's type.
+    num_sectors: list[int] | None = None
 
 
 class TaskResult(BaseModel):
@@ -90,6 +94,11 @@ def _queue_requeue(pipe: redis.client.Pipeline, worker_id: str) -> list[str]:
         pipe.lpush(PENDING_KEY, task_id)
     pipe.delete(worker_tasks_key(worker_id))
     return task_ids
+
+
+def task_type_lookup(redis_client: redis.Redis) -> Callable[[str], str]:
+    """A function giving a task's type; tasks queued without a sector count are short."""
+    return lambda task_id: redis_client.hget(task_key(task_id), "task_type") or SHORT
 
 
 def requeue_tasks(redis_client: redis.Redis, worker_id: str) -> list[str]:
@@ -240,10 +249,19 @@ def create_app(
 
     @app.post("/tasks", status_code=201)
     def add_tasks(new_tasks: NewTasks):
+        sectors = new_tasks.num_sectors
+        if sectors is not None:
+            if len(sectors) != len(new_tasks.star_ids):
+                raise HTTPException(status_code=422, detail="num_sectors needs one entry per star in star_ids")
+            if any(count < 0 for count in sectors):
+                raise HTTPException(status_code=422, detail="num_sectors can't be negative")
         task_ids = []
-        for star_id in new_tasks.star_ids:
+        for index, star_id in enumerate(new_tasks.star_ids):
             task_id = f"t{redis_client.incr(TASK_SEQ_KEY)}"
-            redis_client.hset(task_key(task_id), mapping={"star_id": star_id, "status": "pending"})
+            task = {"star_id": star_id, "status": "pending"}
+            if sectors is not None:
+                task["task_type"] = task_type(sectors[index])
+            redis_client.hset(task_key(task_id), mapping=task)
             # Recorded before the push, since a worker can take the task as soon as it's on the queue.
             run_log.record("task_queued", task_id=task_id, star_id=star_id)
             redis_client.rpush(PENDING_KEY, task_id)
@@ -361,11 +379,23 @@ def main() -> None:
     timeout = float(os.environ.get("HEARTBEAT_TIMEOUT", DEFAULT_HEARTBEAT_TIMEOUT))
     scheduler_name = os.environ.get("SCHEDULER", "round-robin")
     seed = os.environ.get("SCHEDULER_SEED")
-    scheduler = make_scheduler(scheduler_name, int(seed) if seed else None)
-    log.info("using the %s scheduler", scheduler_name)
+    alpha = float(os.environ.get("SCHEDULER_ALPHA") or DEFAULT_ALPHA)
+    beta = float(os.environ.get("SCHEDULER_BETA") or DEFAULT_BETA)
     client = redis.Redis.from_url(redis_url, decode_responses=True)
+    scheduler = make_scheduler(
+        scheduler_name,
+        int(seed) if seed else None,
+        pheromones=PheromoneTable(client),
+        task_type_of=task_type_lookup(client),
+        alpha=alpha,
+        beta=beta,
+    )
+    log.info("using the %s scheduler", scheduler_name)
     run_log = open_run_log(client, os.environ.get("RUN_LOG_DIR") or DEFAULT_RUN_LOG_DIR, scheduler_name)
-    run_log.record("coordinator_started", scheduler=scheduler_name, seed=int(seed) if seed else None, heartbeat_timeout=timeout)
+    settings = {"alpha": alpha, "beta": beta} if scheduler_name == "ant" else {}
+    run_log.record(
+        "coordinator_started", scheduler=scheduler_name, seed=int(seed) if seed else None, heartbeat_timeout=timeout, **settings
+    )
     log.info("writing the run log to %s", run_log.path)
     uvicorn.run(
         create_app(client, heartbeat_timeout=timeout, sweep_interval=timeout / 3, scheduler=scheduler, run_log=run_log),

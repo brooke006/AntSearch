@@ -4,7 +4,8 @@
     python -m antsearch.submit --limit 50 --no-wait    # queue them and exit
 
 The star list is a CSV with a star_id column of TOI numbers (see datasets/tess_data_mixed.csv);
-each is queued as "TOI-<number>", a name MAST resolves.
+each is queued as "TOI-<number>", a name MAST resolves. If it also has a num_sectors column, the
+counts are sent too, so the coordinator knows which tasks are short and which multi-sector.
 """
 
 import argparse
@@ -30,9 +31,20 @@ def read_stars(path: str | Path = DEFAULT_STARS, limit: int | None = None) -> li
     return [f"TOI-{row['star_id']}" for row in rows[:limit]]
 
 
-def submit(client: httpx.Client, star_ids: list[str]) -> list[str]:
-    """Queue one task per star and return the task IDs."""
-    response = client.post("/tasks", json={"star_ids": star_ids})
+def read_sectors(path: str | Path = DEFAULT_STARS, limit: int | None = None) -> list[int] | None:
+    """The num_sectors of the first `limit` stars, or None if the list doesn't give every one."""
+    with open(path, newline="") as f:
+        rows = list(csv.DictReader(f))[:limit]
+    try:
+        return [int(row["num_sectors"]) for row in rows]
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def submit(client: httpx.Client, star_ids: list[str], num_sectors: list[int] | None = None) -> list[str]:
+    """Queue one task per star, with its sector count if given, and return the task IDs."""
+    body = {"star_ids": star_ids} if num_sectors is None else {"star_ids": star_ids, "num_sectors": num_sectors}
+    response = client.post("/tasks", json=body)
     response.raise_for_status()
     return response.json()["task_ids"]
 
@@ -89,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
     star_ids = read_stars(args.stars, args.limit)
     with httpx.Client(base_url=args.url, timeout=10.0) as client:
         start = time.monotonic()
-        task_ids = submit(client, star_ids)
+        task_ids = submit(client, star_ids, read_sectors(args.stars, args.limit))
         log.info("queued %d stars as tasks %s to %s", len(task_ids), task_ids[0], task_ids[-1])
         if args.wait:
             tasks = wait_for(client, task_ids, args.poll_interval)
