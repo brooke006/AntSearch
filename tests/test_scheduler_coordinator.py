@@ -111,18 +111,21 @@ def test_only_accepted_results_reach_scheduler():
     class RecordingScheduler(RoundRobinScheduler):
         results = []
 
-        def on_result(self, worker_id, result):
-            self.results.append((worker_id, result))
+        def on_result(self, worker_id, result, task_id=None, seconds=None):
+            self.results.append((worker_id, result, task_id, seconds))
 
     database = fakeredis.FakeRedis(decode_responses=True)
-    with TestClient(create_app(database, scheduler=RecordingScheduler())) as client:
+    now = [1000.0]
+    with TestClient(create_app(database, clock=lambda: now[0], scheduler=RecordingScheduler())) as client:
         client.post("/workers/register", json={"worker_id": "worker1"})
         client.post("/tasks", json={"star_ids": ["star1"]})
         client.post("/tasks/request", json={"worker_id": "worker1"})
+        now[0] += 7.5
         assert client.post("/tasks/t1/result", json={"worker_id": "other", "result": {}}).status_code == 409
         assert RecordingScheduler.results == []
         assert client.post("/tasks/t1/result", json={"worker_id": "worker1", "result": {"period": 1}}).status_code == 200
-        assert RecordingScheduler.results == [("worker1", {"period": 1})]
+        # The scheduler also gets the task and how long it took on the coordinator's clock.
+        assert RecordingScheduler.results == [("worker1", {"period": 1}, "t1", 7.5)]
 
 
 def test_main_enables_round_robin(monkeypatch, tmp_path):

@@ -9,7 +9,9 @@ class Scheduler:
     def assign(self, worker_id, tasks, workers):
         raise NotImplementedError
 
-    def on_result(self, worker_id, result):
+    def on_result(self, worker_id, result, task_id=None, seconds=None):
+        """Called after the coordinator accepts a result. task_id is the task it was for, and
+        seconds how long the task took on the coordinator's clock, from assignment to result."""
         raise NotImplementedError
 
 
@@ -54,7 +56,7 @@ class RoundRobinScheduler(Scheduler):
         self.previous_workers = available_workers[:]
         return tasks[0]
 
-    def on_result(self, worker_id, result):
+    def on_result(self, worker_id, result, task_id=None, seconds=None):
         pass
 
 
@@ -83,7 +85,7 @@ class RandomScheduler(Scheduler):
         self.chosen = None
         return tasks[0]
 
-    def on_result(self, worker_id, result):
+    def on_result(self, worker_id, result, task_id=None, seconds=None):
         pass
 
 
@@ -118,14 +120,14 @@ class GreedyScheduler(Scheduler):
         fastest = min(workers, key=lambda worker: (self._estimate(worker), worker))
         return tasks[0] if worker_id == fastest else None
 
-    def on_result(self, worker_id, result):
-        seconds = task_seconds(result)
-        if seconds is None:
+    def on_result(self, worker_id, result, task_id=None, seconds=None):
+        reported = task_seconds(result)
+        if reported is None:
             self.failed.add(worker_id)
         elif worker_id in self.estimates:
-            self.estimates[worker_id] += self.smoothing * (seconds - self.estimates[worker_id])
+            self.estimates[worker_id] += self.smoothing * (reported - self.estimates[worker_id])
         else:
-            self.estimates[worker_id] = seconds
+            self.estimates[worker_id] = reported
 
     def _estimate(self, worker):
         if worker in self.estimates:
@@ -135,6 +137,9 @@ class GreedyScheduler(Scheduler):
 
 DEFAULT_ALPHA = 1.0
 DEFAULT_BETA = 2.0
+DEFAULT_EVAPORATION = 0.2
+DEFAULT_LATE_FACTOR = 3.0
+DEFAULT_MIN_LEVEL = 0.2
 MIN_TASK_SECONDS = 0.001  # floor on a speed estimate, so a task that reports 0 s doesn't divide by zero
 
 
@@ -161,22 +166,51 @@ class AntScheduler(Scheduler):
 
     Like the random baseline, the choice is kept until that worker asks or stops being available,
     so polling more often doesn't win more tasks. The choice is made for the task at the front of
-    the queue, using its type. This scheduler only reads the pheromone table; raising and
-    evaporating the levels is a separate step.
+    the queue, using its type.
+
+    Every finished task the coordinator reports with its timing is a round (see on_result): all
+    levels evaporate, then the worker earns a deposit for that task's type if its result counts.
+    Levels stay between min_level and the table's initial level, as in MAX-MIN Ant System
+    (Stuetzle and Hoos, 2000). The ceiling stops whichever worker wins early from snowballing
+    into every task, and the floor keeps a punished worker in the running, so it is still tried
+    now and then. A pair that has never been written reads as the ceiling, so new workers get
+    tried too.
 
     pheromones is a PheromoneTable. task_type_of maps a task ID to its task type; without it,
     every task counts as short.
     """
 
-    def __init__(self, pheromones, task_type_of=None, alpha=DEFAULT_ALPHA, beta=DEFAULT_BETA, seed=None, smoothing=0.3):
+    def __init__(
+        self,
+        pheromones,
+        task_type_of=None,
+        alpha=DEFAULT_ALPHA,
+        beta=DEFAULT_BETA,
+        seed=None,
+        smoothing=0.3,
+        evaporation=DEFAULT_EVAPORATION,
+        late_factor=DEFAULT_LATE_FACTOR,
+        min_level=DEFAULT_MIN_LEVEL,
+    ):
         self.pheromones = pheromones
         self.task_type_of = task_type_of or (lambda task_id: SHORT)
         self.alpha = _check_exponent(alpha, "alpha")
         self.beta = _check_exponent(beta, "beta")
+        if isinstance(evaporation, bool) or not isinstance(evaporation, (int, float)) or not 0 <= evaporation <= 1:
+            raise ValueError(f"evaporation must be between 0 and 1, not {evaporation!r}")
+        self.evaporation = float(evaporation)
+        if isinstance(late_factor, bool) or not isinstance(late_factor, (int, float)) or not late_factor >= 1:
+            raise ValueError(f"late_factor must be a number >= 1, not {late_factor!r}")
+        self.late_factor = float(late_factor)
+        self.max_level = pheromones.initial_level
+        self.min_level = _check_exponent(min_level, "min_level")
+        if self.min_level > self.max_level:
+            raise ValueError(f"min_level {min_level!r} is above the pheromone table's initial level {self.max_level!r}")
         self.random = random.Random(seed)
         self.smoothing = smoothing
         self.estimates = {}
         self.failed = set()
+        self.typical = {}  # task type -> moving average of how long its tasks take, on the coordinator's clock
         self.chosen = None
 
     def __deepcopy__(self, memo):
@@ -186,6 +220,7 @@ class AntScheduler(Scheduler):
         clone.random = copy.deepcopy(self.random, memo)
         clone.estimates = dict(self.estimates)
         clone.failed = set(self.failed)
+        clone.typical = dict(self.typical)
         return clone
 
     def assign(self, worker_id, tasks, workers):
@@ -230,24 +265,78 @@ class AntScheduler(Scheduler):
                 speeds[worker] = slowest if worker in self.failed else fastest
         return speeds
 
-    def on_result(self, worker_id, result):
-        seconds = task_seconds(result)
-        if seconds is None:
+    def on_result(self, worker_id, result, task_id=None, seconds=None, disputed=False):
+        """Learn from an accepted result, and return what it did to the pheromone table.
+
+        The worker's speed estimate always follows the timings in its result. If the coordinator
+        also gave the task and how long it took, this is a round:
+
+        1. Every stored level evaporates: level *= 1 - evaporation (never below min_level).
+        2. The worker earns a deposit for the task's type of evaporation * max_level * typical /
+           seconds (never above max_level), where typical is the recent average time of that
+           type of task. A worker that does every task at the usual speed so stays at the
+           ceiling, and one that only gets some of them, or is slower, settles lower. Nothing is
+           deposited for a failed result (it has an "error" key), a late one (more than
+           late_factor * typical seconds), or a disputed one (its answer didn't match another
+           worker's). Evaporation alone then wears the worker's level down.
+
+        With evaporation 0, levels never change.
+
+        Returns "deposited", "failed", "late" or "disputed" for a round, None otherwise.
+        seconds is measured by the coordinator rather than reported by the worker, so a worker
+        can't earn more by misreporting its timings.
+        """
+        reported = task_seconds(result)
+        if reported is None:
             self.failed.add(worker_id)
         elif worker_id in self.estimates:
-            self.estimates[worker_id] += self.smoothing * (seconds - self.estimates[worker_id])
+            self.estimates[worker_id] += self.smoothing * (reported - self.estimates[worker_id])
         else:
-            self.estimates[worker_id] = seconds
+            self.estimates[worker_id] = reported
+
+        if task_id is None or seconds is None:
+            return None
+        kind = self.task_type_of(task_id)
+        seconds = max(seconds, MIN_TASK_SECONDS)
+        typical = self.typical.get(kind)
+
+        # Store the worker's pair first: one that has never been written reads as the ceiling and
+        # evaporation skips it, so a worker whose every result failed would otherwise stay on top.
+        self.pheromones.ensure(worker_id, kind)
+        self.pheromones.evaporate(self.evaporation, self.min_level)
+        if "error" in result:
+            return "failed"
+        if disputed:
+            outcome = "disputed"
+        elif typical is not None and seconds > self.late_factor * typical:
+            outcome = "late"
+        else:
+            amount = self.evaporation * self.max_level * (typical or seconds) / seconds
+            self.pheromones.add(worker_id, kind, amount, maximum=self.max_level)
+            outcome = "deposited"
+        # Late results still count towards the typical time, so if every worker slows down
+        # together the yardstick follows instead of calling everything late for good.
+        self.typical[kind] = seconds if typical is None else typical + self.smoothing * (seconds - typical)
+        return outcome
 
 
 SCHEDULER_NAMES = ("round-robin", "random", "greedy", "ant")
 
 
-def make_scheduler(name, seed=None, pheromones=None, task_type_of=None, alpha=DEFAULT_ALPHA, beta=DEFAULT_BETA):
+def make_scheduler(
+    name,
+    seed=None,
+    pheromones=None,
+    task_type_of=None,
+    alpha=DEFAULT_ALPHA,
+    beta=DEFAULT_BETA,
+    evaporation=DEFAULT_EVAPORATION,
+    late_factor=DEFAULT_LATE_FACTOR,
+):
     """The scheduler the SCHEDULER setting names: round-robin, random, greedy or ant.
 
     random and ant use seed. ant also needs pheromones (a PheromoneTable) and uses task_type_of,
-    alpha and beta.
+    alpha, beta, evaporation and late_factor.
     """
     if name == "round-robin":
         return RoundRobinScheduler()
@@ -258,5 +347,7 @@ def make_scheduler(name, seed=None, pheromones=None, task_type_of=None, alpha=DE
     if name == "ant":
         if pheromones is None:
             raise ValueError("the ant scheduler needs a pheromone table")
-        return AntScheduler(pheromones, task_type_of, alpha=alpha, beta=beta, seed=seed)
+        return AntScheduler(
+            pheromones, task_type_of, alpha=alpha, beta=beta, seed=seed, evaporation=evaporation, late_factor=late_factor
+        )
     raise ValueError(f"unknown SCHEDULER {name!r}; use {', '.join(SCHEDULER_NAMES[:-1])} or {SCHEDULER_NAMES[-1]}")
