@@ -174,12 +174,12 @@ The coordinator writes one JSON line per event, with `time` in Unix seconds on i
 
 | `event` | Other fields |
 |---|---|
-| `coordinator_started` | `scheduler`, `seed`, `heartbeat_timeout`, and `alpha` and `beta` for the ant scheduler |
+| `coordinator_started` | `scheduler`, `seed`, `heartbeat_timeout`, and `alpha`, `beta`, `evaporation` and `late_factor` for the ant scheduler |
 | `worker_registered`, `worker_online` | `worker_id` |
 | `worker_offline` | `worker_id`, `last_heartbeat` |
 | `task_queued` | `task_id`, `star_id` |
 | `task_assigned` | `task_id`, `star_id`, `worker_id` |
-| `task_done` | `task_id`, `worker_id`, `result` (a failed run's result has an `error` key) |
+| `task_done` | `task_id`, `worker_id`, `result` (a failed run's result has an `error` key), and for the ant scheduler `pheromone`: `deposited`, `failed`, `late` or `disputed` |
 | `task_requeued` | `task_id`, `worker_id`, `reason` (`offline` or `reregistered`), `last_heartbeat` |
 | `result_rejected` | `task_id`, `worker_id`, `status`, `result` |
 
@@ -221,7 +221,7 @@ Set `SCHEDULER` to choose one, for example `SCHEDULER=greedy make up`:
 | `round-robin` (default) | The next available worker in worker-ID order |
 | `random` | An available worker chosen uniformly at random. Set `SCHEDULER_SEED` to an integer to repeat the same sequence of choices |
 | `greedy` | The available worker with the shortest estimated task time |
-| `ant` | An available worker chosen at random, weighted by its pheromone for the task's type and its recent speed (Ant System). `SCHEDULER_ALPHA` and `SCHEDULER_BETA` set the weights; `SCHEDULER_SEED` works as for `random` |
+| `ant` | An available worker chosen at random, weighted by its pheromone for the task's type and its recent speed (Ant System). `SCHEDULER_ALPHA` and `SCHEDULER_BETA` set the weights, `SCHEDULER_EVAPORATION` and `SCHEDULER_LATE_FACTOR` how the pheromone is updated; `SCHEDULER_SEED` works as for `random` |
 
 "Available" means online with no running task, so a slower worker still gets work while a faster one is busy. All of them make a worker that isn't chosen wait: it gets 204 and asks again after its polling interval.
 
@@ -235,7 +235,27 @@ pheromone ** alpha * speed ** beta / (the same, summed over the available worker
 
 `pheromone` is the worker's level in the [pheromone table](#pheromone-table) for the type of the task at the front of the queue, and `speed` is 1 / its estimated task time, the same moving average greedy uses. `alpha` (`SCHEDULER_ALPHA`, default 1) sets how much the learned pheromone counts, and `beta` (`SCHEDULER_BETA`, default 2) how much the current speed counts. With both at 0 the choice is uniform, like `random`. A slower worker keeps a smaller but non-zero chance, so it is still tried now and then. A worker with no timed result yet counts as fast as the fastest measured one, so new workers get tried; one whose results have all failed counts as slow as the slowest. Like `random`, the choice stands until that worker asks, so polling more often doesn't win more tasks. The run log's `coordinator_started` line records `alpha` and `beta` for an ant run.
 
-Nothing raises the pheromone levels yet, so for now they all stay at 1 and only speed decides; deposit and evaporation come in a later change. Simulated workers all report the same time, so between them the ant scheduler's choice is uniform.
+**Evaporation and deposit.** Every task that finishes is a round. First every stored level evaporates: it's multiplied by `1 - evaporation` (`SCHEDULER_EVAPORATION`, default 0.2). Then the worker that finished earns a deposit for that task's type:
+
+```
+deposit = evaporation * typical / seconds
+```
+
+`seconds` is how long the task took on the coordinator's clock, from assignment to result, so a worker can't earn more by reporting false timings. `typical` is the recent average for that type of task. A task done at the usual speed earns `evaporation`, and one done twice as fast earns twice that. A worker that does every task at the usual speed therefore stays at 1, while one that is slower, or gets fewer tasks, settles lower. Some results earn nothing, and evaporation alone then wears the worker's level down:
+
+| Result | Why it earns nothing |
+|---|---|
+| Failed | It has an `error` key |
+| Late | It took more than `SCHEDULER_LATE_FACTOR` (default 3) times the typical time for its type |
+| Disputed | Its answer didn't match another worker's. Nothing marks a result disputed yet; that comes with replication |
+
+Levels stay between 0.2 and 1, as in MAX-MIN Ant System (Stützle and Hoos, 2000). Without the ceiling, whichever worker wins the first few tasks earns more pheromone, so it wins more and soon takes almost everything (Ant System's "stagnation"). The floor keeps a punished worker in the running, so it is still tried now and then. A pair nobody has written yet reads as 1, so a new worker gets tried. With `SCHEDULER_EVAPORATION=0`, levels never change.
+
+What to expect, with tasks handed out one at a time so both workers are free at every choice:
+
+- A worker that slows down five-fold drops below a quarter of the choices within about 2 rounds, and within 4 in all 30 seeds tried.
+- Two equal workers still drift apart for stretches: over 50 tasks, one's share ranged from 10% to 76% across the same seeds, against 32% to 64% with evaporation off. A lower evaporation rate is fairer to equal workers but punishes slower; that is the trade-off the parameter sweep tunes.
+- Simulated workers all report the same time, so between them only luck separates the levels.
 
 **Joining and leaving.** A worker joins by registering. If it sends no heartbeat for longer than the timeout, the coordinator marks it `offline`. A background check runs every third of the timeout, and `GET /workers` and `POST /tasks/request` also check first. When a worker is marked offline, its unfinished tasks go back to the front of the queue for another worker. An offline worker gets 409 on task requests and result submissions until it sends a heartbeat or registers again. A worker that registers again after a restart gives up any tasks it held, since it lost them in the restart.
 
@@ -258,7 +278,7 @@ The ant scheduler keeps its scores in a pheromone table ([pheromone.py](src/ants
 | `short` | One TESS sector or none (`num_sectors` ≤ 1 in the star list) |
 | `multi_sector` | Two or more sectors |
 
-`PheromoneTable(redis_client)` gives `get(worker, type)`, `levels(type, workers)` for a set of workers in one round trip, `set`, `add` (atomic in Redis, so deposits that arrive together all count), `table()`, `forget_worker` and `clear`. A pair that hasn't been written yet reads as the initial level (1.0 by default). The table only stores levels: the `ant` scheduler reads them, and the deposit and evaporation rules come later.
+`PheromoneTable(redis_client)` gives `get(worker, type)`, `levels(type, workers)` for a set of workers in one round trip, `set`, `add` (atomic in Redis, so deposits that arrive together all count), `table()`, `forget_worker` and `clear`. A pair that hasn't been written yet reads as the initial level (1.0 by default). `evaporate(rate, minimum)` scales every stored level in one go, and `ensure` stores a pair at the initial level so evaporation reaches it. The `ant` scheduler reads the levels to choose workers and updates them after every task (see [Schedulers](#schedulers)).
 
 A task gets its type from the `num_sectors` it was queued with; `make submit` sends them from the star list's `num_sectors` column. A task queued without one counts as `short`, which is also what the transit search actually runs today: it searches only the star's first sector.
 

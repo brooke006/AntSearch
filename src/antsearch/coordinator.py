@@ -38,7 +38,14 @@ from pydantic import BaseModel
 
 from antsearch.pheromone import SHORT, PheromoneTable, task_type
 from antsearch.runlog import NO_RUN_LOG, RunLog
-from antsearch.scheduler import DEFAULT_ALPHA, DEFAULT_BETA, Scheduler, make_scheduler
+from antsearch.scheduler import (
+    DEFAULT_ALPHA,
+    DEFAULT_BETA,
+    DEFAULT_EVAPORATION,
+    DEFAULT_LATE_FACTOR,
+    Scheduler,
+    make_scheduler,
+)
 
 log = logging.getLogger("antsearch.coordinator")
 
@@ -338,15 +345,19 @@ def create_app(
                 "result_rejected", task_id=task_id, worker_id=submission.worker_id, status=task["status"], result=submission.result
             )
             raise HTTPException(status_code=409, detail=f"task {task_id!r} is not assigned to {submission.worker_id!r}")
+        now = clock()
         redis_client.hset(
             task_key(task_id),
-            mapping={"status": "done", "completed_at": clock(), "result": json.dumps(submission.result)},
+            mapping={"status": "done", "completed_at": now, "result": json.dumps(submission.result)},
         )
         redis_client.srem(worker_tasks_key(submission.worker_id), task_id)
+        seconds = now - float(task["assigned_at"]) if "assigned_at" in task else None
+        pheromone = None
         with scheduler_lock:
             if active_scheduler is not None:
-                active_scheduler.on_result(submission.worker_id, submission.result)
-        run_log.record("task_done", task_id=task_id, worker_id=submission.worker_id, result=submission.result)
+                pheromone = active_scheduler.on_result(submission.worker_id, submission.result, task_id=task_id, seconds=seconds)
+        details = {"pheromone": pheromone} if pheromone else {}
+        run_log.record("task_done", task_id=task_id, worker_id=submission.worker_id, result=submission.result, **details)
         log.info("task %s done by worker %s", task_id, submission.worker_id)
         return {"task_id": task_id, "status": "done"}
 
@@ -381,6 +392,8 @@ def main() -> None:
     seed = os.environ.get("SCHEDULER_SEED")
     alpha = float(os.environ.get("SCHEDULER_ALPHA") or DEFAULT_ALPHA)
     beta = float(os.environ.get("SCHEDULER_BETA") or DEFAULT_BETA)
+    evaporation = float(os.environ.get("SCHEDULER_EVAPORATION") or DEFAULT_EVAPORATION)
+    late_factor = float(os.environ.get("SCHEDULER_LATE_FACTOR") or DEFAULT_LATE_FACTOR)
     client = redis.Redis.from_url(redis_url, decode_responses=True)
     scheduler = make_scheduler(
         scheduler_name,
@@ -389,10 +402,12 @@ def main() -> None:
         task_type_of=task_type_lookup(client),
         alpha=alpha,
         beta=beta,
+        evaporation=evaporation,
+        late_factor=late_factor,
     )
     log.info("using the %s scheduler", scheduler_name)
     run_log = open_run_log(client, os.environ.get("RUN_LOG_DIR") or DEFAULT_RUN_LOG_DIR, scheduler_name)
-    settings = {"alpha": alpha, "beta": beta} if scheduler_name == "ant" else {}
+    settings = {"alpha": alpha, "beta": beta, "evaporation": evaporation, "late_factor": late_factor} if scheduler_name == "ant" else {}
     run_log.record(
         "coordinator_started", scheduler=scheduler_name, seed=int(seed) if seed else None, heartbeat_timeout=timeout, **settings
     )

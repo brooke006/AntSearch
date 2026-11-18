@@ -2,13 +2,15 @@
 
 Every line has a time (Unix seconds on the coordinator's clock) and an event, plus:
 
-    coordinator_started   scheduler, seed, heartbeat_timeout (plus alpha, beta for the ant scheduler)
+    coordinator_started   scheduler, seed, heartbeat_timeout (plus alpha, beta, evaporation, late_factor
+                          for the ant scheduler)
     worker_registered     worker_id
     worker_offline        worker_id, last_heartbeat
     worker_online         worker_id
     task_queued           task_id, star_id
     task_assigned         task_id, star_id, worker_id
-    task_done             task_id, worker_id, result (a failed run's result has an "error" key)
+    task_done             task_id, worker_id, result (a failed run's result has an "error" key), and
+                          for the ant scheduler pheromone (deposited, failed, late or disputed)
     task_requeued         task_id, worker_id, reason (offline or reregistered), last_heartbeat
     result_rejected       task_id, worker_id, status, result
 

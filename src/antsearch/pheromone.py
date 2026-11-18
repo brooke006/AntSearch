@@ -12,8 +12,9 @@ type in one call:
     antsearch:pheromone:<task type>     hash: worker ID -> pheromone level (float)
 
 Levels live in Redis rather than in the coordinator's memory, so a coordinator that restarts
-picks up where it left off. A pair with no entry yet has the initial level. This module only
-stores levels; the rules that raise and evaporate them belong to the scheduler.
+picks up where it left off. A pair with no entry yet has the initial level. This module stores
+levels and can evaporate them all at once; when to evaporate and how much to deposit is up to the
+scheduler (see AntScheduler.on_result).
 """
 
 import math
@@ -83,11 +84,26 @@ class PheromoneTable:
         _check_task_type(task_type)
         self.redis.hset(pheromone_key(task_type), worker_id, _check_level(level))
 
-    def add(self, worker_id: str, task_type: str, amount: float) -> float:
-        """Add amount (>= 0) to a level, starting from the initial level, and return the new level."""
+    def add(self, worker_id: str, task_type: str, amount: float, maximum: float | None = None) -> float:
+        """Add amount (>= 0) to a level, starting from the initial level, and return the new level.
+
+        With maximum, the level is capped there; that read-and-write is one transaction watching
+        the hash, retried if anything else writes to it first.
+        """
         _check_task_type(task_type)
         amount = _check_level(amount, "amount")
         key = pheromone_key(task_type)
+        if maximum is not None:
+            maximum = _check_level(maximum, "maximum")
+
+            def capped(pipe: redis.client.Pipeline) -> float:
+                current = pipe.hget(key, worker_id)
+                level = min((self.initial_level if current is None else float(current)) + amount, maximum)
+                pipe.multi()
+                pipe.hset(key, worker_id, level)
+                return level
+
+            return self.redis.transaction(capped, key, value_from_callable=True)
         # One MULTI: start a missing pair at the initial level, then increment it in Redis, so two
         # deposits at once both count.
         with self.redis.pipeline() as pipe:
@@ -95,6 +111,33 @@ class PheromoneTable:
             pipe.hincrbyfloat(key, worker_id, amount)
             _, level = pipe.execute()
         return float(level)
+
+    def ensure(self, worker_id: str, task_type: str) -> None:
+        """Store a pair at the initial level if it has never been written, so evaporation reaches it."""
+        _check_task_type(task_type)
+        self.redis.hsetnx(pheromone_key(task_type), worker_id, self.initial_level)
+
+    def evaporate(self, rate: float, minimum: float = 0.0) -> None:
+        """Multiply every stored level by (1 - rate), keeping each at or above minimum.
+
+        Pairs never written stay at the initial level. Each task type's hash is rewritten in one
+        Redis transaction that watches it, so a deposit that lands mid-way is retried, not lost.
+        """
+        if isinstance(rate, bool) or not isinstance(rate, (int, float)) or not 0 <= rate <= 1:
+            raise ValueError(f"rate must be between 0 and 1, not {rate!r}")
+        minimum = _check_level(minimum, "minimum")
+        if rate == 0:
+            return
+
+        def scale(pipe: redis.client.Pipeline, key: str) -> None:
+            levels = pipe.hgetall(key)
+            pipe.multi()
+            if levels:
+                pipe.hset(key, mapping={worker: max(float(level) * (1 - rate), minimum) for worker, level in levels.items()})
+
+        for kind in TASK_TYPES:
+            key = pheromone_key(kind)
+            self.redis.transaction(lambda pipe: scale(pipe, key), key)
 
     def table(self) -> dict[str, dict[str, float]]:
         """Every stored level, as {worker ID: {task type: level}}. Pairs never set are left out."""
