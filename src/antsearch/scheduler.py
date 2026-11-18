@@ -135,8 +135,9 @@ class GreedyScheduler(Scheduler):
         return math.inf if worker in self.failed else 0.0
 
 
+# alpha, beta and evaporation were chosen with the parameter sweep: see docs/parameter-sweep.md.
 DEFAULT_ALPHA = 1.0
-DEFAULT_BETA = 2.0
+DEFAULT_BETA = 4.0
 DEFAULT_EVAPORATION = 0.2
 DEFAULT_LATE_FACTOR = 3.0
 DEFAULT_MIN_LEVEL = 0.2

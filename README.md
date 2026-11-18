@@ -34,6 +34,7 @@ The [Makefile](Makefile) wraps the common commands. Run `make` on its own to lis
 | `make submit` | Queue the first 50 stars of the TESS list on the cluster and wait for the results (`STARS=...` for another count) |
 | `make scenario` | Run a failure scenario on the cluster (`SCENARIO=scenarios/slow-worker.yaml`); see [Failure scenarios](#failure-scenarios) |
 | `make metrics` | Completion time, throughput and wasted work of the newest run (`RUN=output/runs/<run>.jsonl` for another); see [Run logs and metrics](#run-logs-and-metrics) |
+| `make sweep` | Simulate the ant scheduler over a grid of alpha, beta and evaporation (about 11 minutes on 10 cores); see [docs/parameter-sweep.md](docs/parameter-sweep.md) |
 | `make test` | Unit and science tests (everything that doesn't need Docker) |
 | `make test-unit` | Fast tests only: coordinator, worker, submit, scenarios, run logs, pheromone table, package |
 | `make test-science` | Light-curve pipeline tests |
@@ -233,7 +234,7 @@ The ant scheduler gives each available worker a chance of
 pheromone ** alpha * speed ** beta / (the same, summed over the available workers)
 ```
 
-`pheromone` is the worker's level in the [pheromone table](#pheromone-table) for the type of the task at the front of the queue, and `speed` is 1 / its estimated task time, the same moving average greedy uses. `alpha` (`SCHEDULER_ALPHA`, default 1) sets how much the learned pheromone counts, and `beta` (`SCHEDULER_BETA`, default 2) how much the current speed counts. With both at 0 the choice is uniform, like `random`. A slower worker keeps a smaller but non-zero chance, so it is still tried now and then. A worker with no timed result yet counts as fast as the fastest measured one, so new workers get tried; one whose results have all failed counts as slow as the slowest. Like `random`, the choice stands until that worker asks, so polling more often doesn't win more tasks. The run log's `coordinator_started` line records `alpha` and `beta` for an ant run.
+`pheromone` is the worker's level in the [pheromone table](#pheromone-table) for the type of the task at the front of the queue, and `speed` is 1 / its estimated task time, the same moving average greedy uses. `alpha` (`SCHEDULER_ALPHA`, default 1) sets how much the learned pheromone counts, and `beta` (`SCHEDULER_BETA`, default 4) how much the current speed counts. The defaults come from the [parameter sweep](docs/parameter-sweep.md). With both at 0 the choice is uniform, like `random`. A slower worker keeps a smaller but non-zero chance, so it is still tried now and then. A worker with no timed result yet counts as fast as the fastest measured one, so new workers get tried; one whose results have all failed counts as slow as the slowest. Like `random`, the choice stands until that worker asks, so polling more often doesn't win more tasks. The run log's `coordinator_started` line records `alpha` and `beta` for an ant run.
 
 **Evaporation and deposit.** Every task that finishes is a round. First every stored level evaporates: it's multiplied by `1 - evaporation` (`SCHEDULER_EVAPORATION`, default 0.2). Then the worker that finished earns a deposit for that task's type:
 
@@ -253,8 +254,8 @@ Levels stay between 0.2 and 1, as in MAX-MIN Ant System (Stützle and Hoos, 2000
 
 What to expect, with tasks handed out one at a time so both workers are free at every choice:
 
-- A worker that slows down five-fold drops below a quarter of the choices within about 2 rounds, and within 4 in all 30 seeds tried.
-- Two equal workers still drift apart for stretches: over 50 tasks, one's share ranged from 10% to 76% across the same seeds, against 32% to 64% with evaporation off. A lower evaporation rate is fairer to equal workers but punishes slower; that is the trade-off the parameter sweep tunes.
+- A worker that slows down five-fold drops below a quarter of the choices within about 1 round, and within 4 in all 30 seeds tried.
+- Two equal workers still drift apart for stretches: over 50 tasks, one's share ranged from 10% to 76% across the same seeds, against 32% to 64% with evaporation off. A lower evaporation rate is fairer to equal workers but punishes slower. The [parameter sweep](docs/parameter-sweep.md) found the rate makes almost no difference to turnaround, so it stays at 0.2.
 - Simulated workers all report the same time, so between them only luck separates the levels.
 
 **Joining and leaving.** A worker joins by registering. If it sends no heartbeat for longer than the timeout, the coordinator marks it `offline`. A background check runs every third of the timeout, and `GET /workers` and `POST /tasks/request` also check first. When a worker is marked offline, its unfinished tasks go back to the front of the queue for another worker. An offline worker gets 409 on task requests and result submissions until it sends a heartbeat or registers again. A worker that registers again after a restart gives up any tasks it held, since it lost them in the restart.
@@ -324,8 +325,10 @@ AntSearch/
 │   ├── runlog.py       # run log: one JSON line per assignment, result and failure
 │   ├── scenario.py     # failure scenarios: CPU limits, network delay, kills and restarts on a timeline
 │   ├── submit.py       # queue stars from a star list and wait for the results
+│   ├── sweep.py        # parameter sweep: the ant scheduler on simulated workloads
 │   ├── worker.py       # worker: registers, heartbeats, pulls tasks, runs them, reports results
 │   └── datasets/       # TESS star list (tess_data_mixed.csv) and the script that rebuilt it
+├── docs/               # parameter sweep write-up and results, references
 ├── scenarios/          # example failure scenarios for antsearch.scenario
 ├── tests/              # pytest tests; test_integration.py needs a running cluster
 ├── Makefile            # build, run, test and coverage shortcuts (`make help`)
