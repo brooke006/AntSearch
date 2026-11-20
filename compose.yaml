@@ -31,9 +31,10 @@ services:
       HEARTBEAT_TIMEOUT: ${HEARTBEAT_TIMEOUT:-30}
       SCHEDULER: ${SCHEDULER:-round-robin}
       SCHEDULER_SEED: ${SCHEDULER_SEED:-}
-      SCHEDULER_ALPHA: ${SCHEDULER_ALPHA:-}
-      SCHEDULER_BETA: ${SCHEDULER_BETA:-}
-      SCHEDULER_EVAPORATION: ${SCHEDULER_EVAPORATION:-}
+      # Ant scheduler settings from the parameter sweep (docs/parameter-sweep.md); keep in step with scheduler.py.
+      SCHEDULER_ALPHA: ${SCHEDULER_ALPHA:-1}
+      SCHEDULER_BETA: ${SCHEDULER_BETA:-4}
+      SCHEDULER_EVAPORATION: ${SCHEDULER_EVAPORATION:-0.2}
       SCHEDULER_LATE_FACTOR: ${SCHEDULER_LATE_FACTOR:-}
       RUN_LOG_DIR: /runs
     volumes:

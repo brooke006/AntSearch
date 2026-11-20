@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from antsearch import coordinator, submit
 from antsearch.coordinator import create_app, task_key, task_type_lookup
 from antsearch.pheromone import MULTI_SECTOR, SHORT, PheromoneTable
-from antsearch.scheduler import AntScheduler, RandomScheduler, Scheduler, make_scheduler
+from antsearch.scheduler import DEFAULT_ALPHA, DEFAULT_BETA, AntScheduler, RandomScheduler, Scheduler, make_scheduler
 
 
 @pytest.fixture
@@ -414,7 +414,7 @@ def test_main_defaults_alpha_and_beta(monkeypatch, tmp_path):
 
     coordinator.main()
 
-    assert (used[0].alpha, used[0].beta) == (1.0, 2.0)
+    assert (used[0].alpha, used[0].beta) == (DEFAULT_ALPHA, DEFAULT_BETA)
 
 
 # --- Submitting sector counts ------------------------------------------------------------------

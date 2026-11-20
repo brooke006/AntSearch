@@ -18,7 +18,7 @@ IT_COMPOSE := ANTSEARCH_PORT=$(IT_PORT) RUN_LOG_DIR=$(IT_RUNS) HEARTBEAT_TIMEOUT
 	POLL_INTERVAL=0.5 $(COMPOSE) -p antsearch-it
 
 .DEFAULT_GOAL := help
-.PHONY: help install build up down logs ps submit scenario metrics test test-unit test-science test-integration test-all coverage clean
+.PHONY: help install build up down logs ps submit scenario metrics sweep test test-unit test-science test-integration test-all coverage clean
 
 help: ## Show this list
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  %-18s %s\n", $$1, $$2}'
@@ -51,6 +51,9 @@ scenario: ## Run a failure scenario on the stack, e.g. SCENARIO=scenarios/slow-w
 
 metrics: ## Completion time, throughput and wasted work of the newest run, or of RUN=output/runs/<run>.jsonl
 	$(PYTHON) -m antsearch.metrics $(RUN)
+
+sweep: ## Simulate the ant scheduler over a grid of alpha, beta and evaporation; writes docs/parameter-sweep-*
+	$(PYTHON) -m antsearch.sweep
 
 test: ## Unit and science tests: everything that doesn't need a running stack
 	$(PYTEST) -m "not integration"
