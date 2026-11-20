@@ -353,7 +353,7 @@ def test_coordinator_times_tasks_on_its_own_clock_and_logs_the_outcome(redis_cli
 
     # The worker claimed 0.1 s each time, but the coordinator timed 10 s and then 40 s: late.
     done = [event for event in read_events(tmp_path / "run.jsonl") if event["event"] == "task_done"]
-    assert [event["pheromone"] for event in done] == ["deposited", "late", "failed"]
+    assert [event["pheromone"] for event in done] == [{"w1": "deposited"}, {"w1": "late"}, {"w1": "failed"}]
     # Deposited at the ceiling, then two rounds of evaporation with nothing added.
     assert table.get("w1", SHORT) == pytest.approx(1.0 * 0.8 * 0.8)
 

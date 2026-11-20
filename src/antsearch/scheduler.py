@@ -9,9 +9,10 @@ class Scheduler:
     def assign(self, worker_id, tasks, workers):
         raise NotImplementedError
 
-    def on_result(self, worker_id, result, task_id=None, seconds=None):
-        """Called after the coordinator accepts a result. task_id is the task it was for, and
-        seconds how long the task took on the coordinator's clock, from assignment to result."""
+    def on_result(self, worker_id, result, task_id=None, seconds=None, disputed=False):
+        """Called for each run of a task once the coordinator has settled it. task_id is the task,
+        seconds how long the run took on the coordinator's clock, from assignment to result, and
+        disputed whether the result failed to match the accepted answer (or no answer was agreed)."""
         raise NotImplementedError
 
 
@@ -56,7 +57,7 @@ class RoundRobinScheduler(Scheduler):
         self.previous_workers = available_workers[:]
         return tasks[0]
 
-    def on_result(self, worker_id, result, task_id=None, seconds=None):
+    def on_result(self, worker_id, result, task_id=None, seconds=None, disputed=False):
         pass
 
 
@@ -85,7 +86,7 @@ class RandomScheduler(Scheduler):
         self.chosen = None
         return tasks[0]
 
-    def on_result(self, worker_id, result, task_id=None, seconds=None):
+    def on_result(self, worker_id, result, task_id=None, seconds=None, disputed=False):
         pass
 
 
@@ -120,7 +121,7 @@ class GreedyScheduler(Scheduler):
         fastest = min(workers, key=lambda worker: (self._estimate(worker), worker))
         return tasks[0] if worker_id == fastest else None
 
-    def on_result(self, worker_id, result, task_id=None, seconds=None):
+    def on_result(self, worker_id, result, task_id=None, seconds=None, disputed=False):
         reported = task_seconds(result)
         if reported is None:
             self.failed.add(worker_id)
