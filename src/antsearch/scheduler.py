@@ -152,34 +152,13 @@ def _check_exponent(value, name):
 
 
 class AntScheduler(Scheduler):
-    """Ant System: each task goes to an available worker chosen with probability
+    """Ant System: picks an available worker with probability proportional to
+    pheromone ** alpha * speed ** beta.
 
-        p(worker) = pheromone ** alpha * speed ** beta / (the same summed over available workers)
-
-    pheromone is the worker's level for the task's type in the pheromone table (Redis), and speed
-    is 1 / the worker's estimated task time, a moving average of its results like the greedy
-    scheduler's. alpha weighs what the colony has learned, beta how fast the worker is now; with
-    both at 0 the choice is uniform. Slower workers keep a non-zero chance, so they're still
-    explored.
-
-    A worker with no timed result yet counts as fast as the fastest measured worker, so it gets
-    tried. One whose results have all failed counts as slow as the slowest. If nobody is measured
-    yet, every worker's speed is 1.
-
-    Like the random baseline, the choice is kept until that worker asks or stops being available,
-    so polling more often doesn't win more tasks. The choice is made for the task at the front of
-    the queue, using its type.
-
-    Every finished task the coordinator reports with its timing is a round (see on_result): all
-    levels evaporate, then the worker earns a deposit for that task's type if its result counts.
-    Levels stay between min_level and the table's initial level, as in MAX-MIN Ant System
-    (Stuetzle and Hoos, 2000). The ceiling stops whichever worker wins early from snowballing
-    into every task, and the floor keeps a punished worker in the running, so it is still tried
-    now and then. A pair that has never been written reads as the ceiling, so new workers get
-    tried too.
-
-    pheromones is a PheromoneTable. task_type_of maps a task ID to its task type; without it,
-    every task counts as short.
+    pheromone is the worker's level for the task's type and speed is 1 / its estimated task time.
+    Unmeasured workers count as the fastest so they get tried. Levels stay between min_level and
+    the table's initial level, as in MAX-MIN Ant System (Stuetzle and Hoos, 2000).
+    task_type_of maps a task ID to its type; without it every task is short.
     """
 
     def __init__(
@@ -268,25 +247,11 @@ class AntScheduler(Scheduler):
         return speeds
 
     def on_result(self, worker_id, result, task_id=None, seconds=None, disputed=False):
-        """Learn from an accepted result, and return what it did to the pheromone table.
+        """Update the speed estimate, then evaporate all levels and deposit for this worker.
 
-        The worker's speed estimate always follows the timings in its result. If the coordinator
-        also gave the task and how long it took, this is a round:
-
-        1. Every stored level evaporates: level *= 1 - evaporation (never below min_level).
-        2. The worker earns a deposit for the task's type of evaporation * max_level * typical /
-           seconds (never above max_level), where typical is the recent average time of that
-           type of task. A worker that does every task at the usual speed so stays at the
-           ceiling, and one that only gets some of them, or is slower, settles lower. Nothing is
-           deposited for a failed result (it has an "error" key), a late one (more than
-           late_factor * typical seconds), or a disputed one (its answer didn't match another
-           worker's). Evaporation alone then wears the worker's level down.
-
-        With evaporation 0, levels never change.
-
-        Returns "deposited", "failed", "late" or "disputed" for a round, None otherwise.
-        seconds is measured by the coordinator rather than reported by the worker, so a worker
-        can't earn more by misreporting its timings.
+        The deposit is evaporation * max_level * typical / seconds, where typical is the recent
+        average time for the task's type. Failed, late and disputed results get nothing.
+        Returns "deposited", "failed", "late" or "disputed", or None without task_id and seconds.
         """
         reported = task_seconds(result)
         if reported is None:

@@ -3,23 +3,8 @@
     python -m antsearch.metrics                                 # the newest log in output/runs
     python -m antsearch.metrics output/runs/<run>.jsonl
 
-Completion time is from the first task queued to the last task finished. Turnaround is the same for
-each task on its own, averaged; with a full queue every scheduler has about the same choices, so
-turnaround under gradual arrivals shows differences that completion time doesn't.
-
-Throughput is tasks that succeeded per minute of completion time. Failed runs don't count, so a
-worker that fails quickly can't look fast.
-
-Wasted work is worker time that produced no answer, from assignment to:
-    the worker's last heartbeat, for a task taken away from it (it may have been running since,
-        but nothing shows that)
-    the late result, if the worker turned out to be alive and reported after losing the task
-    the error result, for a run that failed
-    the result, for a run whose answer was outvoted by other workers
-
-With replication each task runs on several workers, so worker time counts every run, and a task
-counts once, when its answer is settled. Logs from before replication have no result_received
-events; their task_done events stand for both.
+Wasted work is worker time spent on runs that were lost, failed or outvoted. The README explains
+how each metric is measured.
 """
 
 import argparse

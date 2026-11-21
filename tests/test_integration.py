@@ -7,9 +7,10 @@ Skipped unless ANTSEARCH_URL points at a coordinator. Use a short HEARTBEAT_TIME
 so the compose workers don't download from MAST.
 
 The compose workers pull from the same queue as these tests, so tasks a test queues may be run by
-any of them. The stack runs each task on REPLICAS workers (2 by default); a test worker that wants
-its result accepted reports what the compose workers' simulated task does. The failure-scenario test also needs ANTSEARCH_COMPOSE_PROJECT (make test-integration
-sets antsearch-it) and the docker CLI; it runs last because it kills worker-2 for a while.
+any of them. Each task runs on two workers, so a test worker that wants its result accepted
+reports what the compose workers' simulated task does. The failure-scenario test also needs
+ANTSEARCH_COMPOSE_PROJECT (make test-integration sets antsearch-it) and the docker CLI; it runs
+last because it kills worker-2 for a while.
 """
 
 import os

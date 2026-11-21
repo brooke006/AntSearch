@@ -27,7 +27,7 @@ def ok(seconds=1.0):
     return {"compute_seconds": seconds}
 
 
-# --- PheromoneTable.evaporate and capped add ---------------------------------------------------
+# PheromoneTable.evaporate and capped add
 
 
 def test_evaporate_scales_every_stored_level(table):
@@ -94,7 +94,7 @@ def test_capped_add_stops_at_the_maximum(table):
     assert table.get("w1", SHORT) == 1.0
 
 
-# --- One round: evaporate, then deposit or not --------------------------------------------------
+# One round: evaporate, then deposit or not
 
 
 def scheduler_with_types(table, **kwargs):
@@ -268,7 +268,7 @@ def test_copy_keeps_its_own_typical_times(table):
     assert scheduler.typical == {SHORT: 10.0}
 
 
-# --- A worker that slows down loses share ------------------------------------------------------
+# A worker that slows down loses share
 
 
 def play(scheduler, speeds, rounds, first_task=0):
@@ -333,7 +333,7 @@ def test_a_fresh_good_run_outweighs_an_old_reputation(table):
     assert scheduler.probabilities(SHORT, ["w1", "w2"])["w1"] < 0.3
 
 
-# --- Through the coordinator -------------------------------------------------------------------
+# Through the coordinator
 
 
 def test_coordinator_times_tasks_on_its_own_clock_and_logs_the_outcome(redis_client, tmp_path):

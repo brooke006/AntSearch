@@ -20,14 +20,8 @@ Redis keys:
     antsearch:pheromone:<type>      hash: worker ID -> pheromone level for that task type
                                     (see antsearch.pheromone)
 
-Each task runs on `replicas` different workers and is done once that many results match (see
-antsearch.validation). If they don't, it runs on another worker, up to 2 * replicas - 1 runs; a
-worker whose result is outvoted is flagged. With replicas 1, the first result is accepted.
-
-A worker that misses heartbeats for longer than the heartbeat timeout is marked offline, and any
-tasks it held go back to the front of the pending queue.
-
-Every assignment, result and failure also goes to the run's log file; see antsearch.runlog.
+Each task runs on `replicas` workers and is done when that many results match. A worker that
+misses heartbeats is marked offline and its tasks go back on the queue.
 """
 
 import asyncio
@@ -141,12 +135,7 @@ def task_type_lookup(redis_client: redis.Redis) -> Callable[[str], str]:
 
 
 def requeue_tasks(redis_client: redis.Redis, worker_id: str) -> list[str]:
-    """Put every task assigned to worker_id back at the front of the pending queue.
-
-    Runs as a Redis transaction watching the worker's task set: if anything else changes the set
-    between the read and the write (say a heartbeat check requeueing the same tasks), the write
-    is dropped and retried against the new contents, so no task is queued twice.
-    """
+    """Put every task assigned to worker_id back at the front of the pending queue."""
     task_ids = redis_client.transaction(
         lambda pipe: _queue_requeue(pipe, worker_id), worker_tasks_key(worker_id), value_from_callable=True
     )
@@ -161,15 +150,10 @@ def record_requeued(run_log: RunLog, task_ids: list[str], worker_id: str, reason
 
 
 def mark_offline(redis_client: redis.Redis, now: float, timeout: float, run_log: RunLog = NO_RUN_LOG) -> list[str]:
-    """Mark online workers with no heartbeat in the last `timeout` seconds as offline.
+    """Mark workers with no heartbeat in the last `timeout` seconds offline and requeue their tasks.
 
-    Their tasks are requeued. Returns the IDs of the workers that were marked offline.
-
-    Several checks can run at once (the background loop and requests, on different threads), so
-    each worker's check, offline mark and requeue happen in one Redis transaction watching that
-    worker's keys. If another check, a heartbeat or a re-registration changes them first, the
-    transaction retries with fresh values: a worker is only marked offline once, its tasks are
-    only requeued once, and a heartbeat that lands mid-check keeps the worker online.
+    Returns the workers marked offline. Each worker is checked in its own transaction, since the
+    background loop and requests can check at the same time.
     """
 
     def check(pipe: redis.client.Pipeline, worker_id: str):
@@ -209,13 +193,7 @@ def create_app(
     run_log: RunLog = NO_RUN_LOG,
     replicas: int = 1,
 ) -> FastAPI:
-    """Build the coordinator app.
-
-    If sweep_interval is set, a background loop checks for missed heartbeats that often. Listing
-    workers and requesting a task also check first, so their answers are never stale.
-
-    Each task runs on `replicas` different workers, and is done once that many results match.
-    """
+    """Build the coordinator app. With sweep_interval, a background loop checks heartbeats that often."""
     if isinstance(replicas, bool) or not isinstance(replicas, int) or replicas < 1:
         raise ValueError(f"replicas must be a whole number >= 1, not {replicas!r}")
     max_runs = 2 * replicas - 1
@@ -396,8 +374,7 @@ def create_app(
         return {"task_id": task_id, **task}
 
     def record_result(pipe: redis.client.Pipeline, task_id: str, worker_id: str, result: dict[str, Any]):
-        """Store one run's result and settle the task if it can be. Runs inside a transaction
-        watching the task's keys, so two results arriving together are judged one after the other."""
+        """Store one run's result and settle the task if enough results are in."""
         task = pipe.hgetall(task_key(task_id))
         assigned_at = pipe.hget(task_running_key(task_id), worker_id)
         if task.get("status") == "done" or assigned_at is None:
@@ -514,11 +491,7 @@ async def sweep_forever(sweep: Callable[[], list[str]], interval: float) -> None
 
 
 def open_run_log(redis_client: redis.Redis, directory: str | Path, scheduler_name: str, clock: Callable[[], float] = time.time) -> RunLog:
-    """Open this run's log in directory, one file per run.
-
-    The run is named once and the name kept in Redis, so a coordinator restarted mid-run carries on
-    with the same file, and a fresh Redis (make down, then make up) starts a new one.
-    """
+    """Open this run's log in directory. The run's name is kept in Redis, so a restart reuses the file."""
     started = time.strftime("%Y%m%d-%H%M%S", time.gmtime(clock()))
     redis_client.set(RUN_KEY, f"{started}-{scheduler_name}", nx=True)
     return RunLog(Path(directory) / f"{redis_client.get(RUN_KEY)}.jsonl", clock)

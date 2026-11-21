@@ -35,8 +35,8 @@ log = logging.getLogger("antsearch.runlog")
 class RunLog:
     """Appends events to a JSON-lines file, flushing each one so a killed coordinator loses nothing.
 
-    With no path it records nothing. A failed write is logged rather than raised: a full disk
-    shouldn't stop the cluster, whose state has already changed by the time an event is recorded.
+    With no path it records nothing. A failed write is logged, not raised, so a full disk doesn't
+    stop the cluster.
     """
 
     def __init__(self, path: str | Path | None = None, clock: Callable[[], float] = time.time):

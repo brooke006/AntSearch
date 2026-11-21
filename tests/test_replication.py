@@ -79,7 +79,7 @@ def events(path, name=None):
     return [event for event in read_events(path) if name is None or event["event"] == name]
 
 
-# --- The three things the issue asks for -------------------------------------------------------
+# Accepting, rerunning and flagging
 
 
 def test_matching_results_are_accepted(client, path):
@@ -170,7 +170,7 @@ def test_a_worker_that_returns_garbage_gets_flagged(redis_client, path):
     assert {event["worker_id"] for event in events(path, "result_disputed")} == {"faulty"}
 
 
-# --- Assigning runs ----------------------------------------------------------------------------
+# Assigning runs
 
 
 def test_each_run_goes_to_a_different_worker(client):
@@ -234,7 +234,7 @@ def test_scheduler_chooses_among_workers_free_to_run_the_task(redis_client):
         assert take(client, other) == task_id
 
 
-# --- Settling ----------------------------------------------------------------------------------
+# Settling
 
 
 def test_two_failures_of_the_same_kind_settle_the_task_as_failed(client):
@@ -323,7 +323,7 @@ def test_replicas_must_be_a_whole_number_of_at_least_one(redis_client, replicas)
         create_app(redis_client, replicas=replicas)
 
 
-# --- What the scheduler and the metrics see ------------------------------------------------------
+# What the scheduler and the metrics see
 
 
 def test_an_outvoted_worker_earns_no_pheromone(redis_client, clock, path):
