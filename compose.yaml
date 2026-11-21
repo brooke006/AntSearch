@@ -1,4 +1,4 @@
-# Local dev stack: Redis, the coordinator and two workers.
+# Local dev stack: Redis, the coordinator and three workers.
 #   docker compose up --build
 
 x-worker: &worker
@@ -29,6 +29,9 @@ services:
       COORDINATOR_HOST: 0.0.0.0
       COORDINATOR_PORT: "8000"
       HEARTBEAT_TIMEOUT: ${HEARTBEAT_TIMEOUT:-30}
+      # Each star runs on this many workers and needs that many matching results. Settling a
+      # mismatch needs a worker that hasn't run the star yet, hence the third worker below.
+      REPLICAS: ${REPLICAS:-2}
       SCHEDULER: ${SCHEDULER:-round-robin}
       SCHEDULER_SEED: ${SCHEDULER_SEED:-}
       # Ant scheduler settings from the parameter sweep (docs/parameter-sweep.md); keep in step with scheduler.py.
@@ -66,6 +69,15 @@ services:
     environment:
       COORDINATOR_URL: http://coordinator:8000
       WORKER_ID: worker-2
+      WORKER_TASK: ${WORKER_TASK:-transit}
+      SIMULATED_TASK_SECONDS: ${SIMULATED_TASK_SECONDS:-1}
+      POLL_INTERVAL: ${POLL_INTERVAL:-2}
+
+  worker-3:
+    <<: *worker
+    environment:
+      COORDINATOR_URL: http://coordinator:8000
+      WORKER_ID: worker-3
       WORKER_TASK: ${WORKER_TASK:-transit}
       SIMULATED_TASK_SECONDS: ${SIMULATED_TASK_SECONDS:-1}
       POLL_INTERVAL: ${POLL_INTERVAL:-2}

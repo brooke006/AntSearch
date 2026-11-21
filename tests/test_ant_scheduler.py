@@ -50,7 +50,7 @@ def run_one_at_a_time(scheduler, speeds, count):
     return counts
 
 
-# --- The Ant System rule -----------------------------------------------------------------------
+# The Ant System rule
 
 
 def test_is_a_scheduler(pheromones):
@@ -179,7 +179,7 @@ def test_does_not_change_the_pheromone_table(pheromones, redis_client):
     assert redis_client.keys("antsearch:pheromone:multi_sector") == []
 
 
-# --- Faster workers get more tasks -------------------------------------------------------------
+# Faster workers get more tasks
 
 
 @pytest.mark.parametrize("seed", range(5))
@@ -189,8 +189,8 @@ def test_faster_fake_worker_receives_more_tasks(pheromones, seed):
     ant = run_one_at_a_time(AntScheduler(pheromones, seed=seed), speeds, 200)
     random = run_one_at_a_time(RandomScheduler(seed=seed), speeds, 200)
 
-    # Ant System with the default beta of 2: once both are measured, 1 ** 2 vs (1/4) ** 2, so the
-    # fast worker's chance is 16/17 (94%). Random gives each about half.
+    # With the default beta of 4, once both are measured it's 1 vs (1/4) ** 4, so the fast worker
+    # wins almost every time. Random gives each about half.
     assert ant["fast"] > 0.85 * 200
     assert 0 < ant["slow"] < 0.15 * 200  # the slow worker is still explored
     assert 0.35 * 200 < random["fast"] < 0.65 * 200
@@ -232,7 +232,7 @@ def test_a_worker_that_slows_down_gets_fewer_tasks(pheromones):
     assert after["w1"] < 0.2 * 200
 
 
-# --- Choosing in a pull model ------------------------------------------------------------------
+# Choosing in a pull model
 
 
 @pytest.mark.parametrize("seed", range(5))
@@ -314,7 +314,7 @@ def test_make_scheduler_builds_the_ant_scheduler(pheromones):
         make_scheduler("ant")
 
 
-# --- Through the coordinator -------------------------------------------------------------------
+# Through the coordinator
 
 
 def test_faster_fake_worker_receives_more_tasks_through_the_coordinator(redis_client):
@@ -417,7 +417,7 @@ def test_main_defaults_alpha_and_beta(monkeypatch, tmp_path):
     assert (used[0].alpha, used[0].beta) == (DEFAULT_ALPHA, DEFAULT_BETA)
 
 
-# --- Submitting sector counts ------------------------------------------------------------------
+# Submitting sector counts
 
 
 def test_read_sectors(tmp_path):

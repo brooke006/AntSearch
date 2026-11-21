@@ -36,7 +36,7 @@ The [Makefile](Makefile) wraps the common commands. Run `make` on its own to lis
 | `make metrics` | Completion time, throughput and wasted work of the newest run (`RUN=output/runs/<run>.jsonl` for another); see [Run logs and metrics](#run-logs-and-metrics) |
 | `make sweep` | Simulate the ant scheduler over a grid of alpha, beta and evaporation (about 11 minutes on 10 cores); see [docs/parameter-sweep.md](docs/parameter-sweep.md) |
 | `make test` | Unit and science tests (everything that doesn't need Docker) |
-| `make test-unit` | Fast tests only: coordinator, worker, submit, scenarios, run logs, pheromone table, package |
+| `make test-unit` | Fast tests only: coordinator, replication, worker, submit, scenarios, run logs, pheromone table, package |
 | `make test-science` | Light-curve pipeline tests |
 | `make test-integration` | Start a throwaway cluster, test it over HTTP, tear it down |
 | `make test-all` | `test` plus `test-integration` |
@@ -49,9 +49,9 @@ Tests come in three types, selected with pytest markers:
 
 | Type | Command | Covers | Needs |
 |---|---|---|---|
-| Unit | `make test-unit` | Coordinator endpoints (against [fakeredis](https://github.com/cunla/fakeredis-py)), the worker loop, the submit script, failure scenarios (against a fake Docker and clock), the pheromone table, two in-process workers processing 50 stars, package | Nothing; takes seconds |
+| Unit | `make test-unit` | Coordinator endpoints (against [fakeredis](https://github.com/cunla/fakeredis-py)), the worker loop, the submit script, failure scenarios (against a fake Docker and clock), the pheromone table, replication and result checks (including a worker that returns garbage), two in-process workers processing 50 stars, package | Nothing; takes seconds |
 | Science | `make test-science` | Pipeline: flatten, BLS, plotting, `run_task`, download retries and exit codes, using a synthetic light curve and faked MAST errors | The `science` extra (skipped without it); no network |
-| Integration | `make test-integration` | The real cluster over HTTP: real Redis, the two worker containers processing 50 tasks, a full task round trip, a silent worker going offline and its task finished by another, a failure scenario slowing, killing and restarting a worker on schedule | Docker |
+| Integration | `make test-integration` | The real cluster over HTTP: real Redis, the worker containers processing 50 tasks, a full task round trip, a garbage result outvoted and its worker flagged, a silent worker going offline and its task finished by another, a failure scenario slowing, killing and restarting a worker on schedule | Docker |
 
 `make test` (or plain `python -m pytest`) runs the unit and science tests. The integration tests are skipped unless `ANTSEARCH_URL` points at a coordinator. `make test-integration` sets that for you: it starts a separate compose project (`antsearch-it`) on port 8001 with a 3-second heartbeat timeout, runs the tests, and removes it again, so it doesn't touch a cluster you started with `make up`. Its workers run simulated tasks (`WORKER_TASK=simulated`), so the tests don't download from MAST.
 
@@ -65,11 +65,11 @@ make coverage
 
 This prints a per-file summary with the uncovered line numbers and writes an HTML report to `htmlcov/index.html` (open it in a browser to see uncovered lines highlighted). It covers the unit and science tests. The integration tests run code inside containers, so they don't count towards coverage.
 
-GitHub Actions runs `python -m pytest` (unit and science) on every push and pull request, on Python 3.10–3.13. See [.github/workflows/tests.yml](.github/workflows/tests.yml).
+GitHub Actions runs `python -m pytest` (unit and science) on every push and pull request, on Python 3.10 to 3.13. See [.github/workflows/tests.yml](.github/workflows/tests.yml).
 
 ## Running the local cluster
 
-With [Docker](https://docs.docker.com/get-docker/) running, start Redis, the coordinator and two workers:
+With [Docker](https://docs.docker.com/get-docker/) running, start Redis, the coordinator and three workers:
 
 ```bash
 make up          # or, in the foreground: docker compose up --build
@@ -87,7 +87,7 @@ To give the workers something to do, queue stars from the bundled TESS list ([te
 make submit              # first 50 stars; STARS=10 make submit for fewer
 ```
 
-It prints a line per star (who ran it, and the period and depth found or the error), then the total time and how many tasks each worker ran. Each star takes about a minute, mostly searching MAST and downloading the light curve. `python -m antsearch.submit --help` lists the options, including `--stars` for another CSV and `--no-wait`.
+Each star runs on two workers and is accepted once their results match (see [Replication](#replication)). It prints a line per star (whose result was accepted, and the period and depth found or the error), then the total time and how many accepted results came from each worker. Each star takes about a minute, mostly searching MAST and downloading the light curve. `python -m antsearch.submit --help` lists the options, including `--stars` for another CSV and `--no-wait`.
 
 `make down` stops the cluster. `make up` always rebuilds the images, so it picks up code changes.
 
@@ -141,19 +141,13 @@ events:
 
 `worker` is a compose service name. [scenarios/](scenarios/) has two examples: `slow-worker.yaml` and `crash-and-recover.yaml`.
 
-What makes two runs of the same file match:
+Before the first event, every worker the scenario names is started if needed and its CPU limit and delay are removed, so runs of the same file start from the same state. Events are timed from the start, so a slow docker command only delays its own event, and events at the same time run in file order. A kill throws away the container's network settings, so the scenario sets the delay again when it starts that worker. In our runs, every event landed within 5 ms of its planned time.
 
-- **Same starting state.** Before the first event, every worker the scenario names is started if it isn't running, and its CPU limit and delay are removed.
-- **Timed from the start, not from the last event.** A slow docker command makes its own event late but not the ones after it. Events at the same time run in file order.
-- **Delays survive restarts.** A kill throws away the container's network settings, so the scenario sets the delay again when it starts that worker.
-
-Run twice on the same stack, a six-event scenario applied every event within 5 ms of its planned time.
-
-Some things to know:
+Notes:
 
 - CPU limits slow the transit search, but not simulated tasks (`WORKER_TASK=simulated`), which only sleep.
 - Network delay applies to everything the worker sends: heartbeats, task requests, results and MAST downloads.
-- The worker containers need `NET_ADMIN` and `tc` for the delay. `compose.yaml` and the Dockerfile provide both, so run `make up` again after pulling this change.
+- The worker containers need `NET_ADMIN` and `tc` for the delay. `compose.yaml` and the Dockerfile provide both.
 - Other options: `python -m antsearch.scenario FILE --dry-run` prints the timeline without touching Docker, and `-p PROJECT` targets another compose project. `--help` lists the rest.
 
 Exit status: 0 if every event applied, 1 if some failed (each is logged with its error and the scenario carries on), 3 if the workers couldn't be reached (is the cluster up?).
@@ -175,20 +169,23 @@ The coordinator writes one JSON line per event, with `time` in Unix seconds on i
 
 | `event` | Other fields |
 |---|---|
-| `coordinator_started` | `scheduler`, `seed`, `heartbeat_timeout`, and `alpha`, `beta`, `evaporation` and `late_factor` for the ant scheduler |
+| `coordinator_started` | `scheduler`, `seed`, `heartbeat_timeout`, `replicas`, and `alpha`, `beta`, `evaporation` and `late_factor` for the ant scheduler |
 | `worker_registered`, `worker_online` | `worker_id` |
 | `worker_offline` | `worker_id`, `last_heartbeat` |
 | `task_queued` | `task_id`, `star_id` |
-| `task_assigned` | `task_id`, `star_id`, `worker_id` |
-| `task_done` | `task_id`, `worker_id`, `result` (a failed run's result has an `error` key), and for the ant scheduler `pheromone`: `deposited`, `failed`, `late` or `disputed` |
+| `task_assigned` | `task_id`, `star_id`, `worker_id`; one for each run of a task |
+| `result_received` | `task_id`, `worker_id`, `result` (a failed run's result has an `error` key) |
+| `task_rerun` | `task_id`, `runs`, `reason`: the results disagree, so more runs were queued |
+| `result_disputed` | `task_id`, `worker_id`, `result`: a result the other workers outvoted |
+| `task_done` | `task_id`, `result`, `outcome` (`accepted` or `unresolved`), `agreed` (the workers whose results matched), `worker_id` (the first of them), and for the ant scheduler `pheromone`: each run's worker mapped to `deposited`, `failed`, `late` or `disputed` |
 | `task_requeued` | `task_id`, `worker_id`, `reason` (`offline` or `reregistered`), `last_heartbeat` |
 | `result_rejected` | `task_id`, `worker_id`, `status`, `result` |
 
 The metrics:
 
-- **Completion time:** from the first task queued to the last task finished. `make metrics` also shows the mean turnaround, the same measure for each task on its own. With a full queue the schedulers have about the same choices, so to compare them, queue tasks gradually and look at turnaround.
+- **Completion time:** from the first task queued to the last task settled. `make metrics` also shows the mean turnaround, the same measure for each task on its own. With a full queue the schedulers have about the same choices, so to compare them, queue tasks gradually and look at turnaround.
 - **Throughput:** tasks that succeeded per minute of completion time. Failed runs don't count, so a worker that fails quickly can't look fast.
-- **Wasted work:** worker time that produced no answer, measured from assignment. For a task taken from a worker, that's up to the worker's last heartbeat, or up to its result if it turns out to be alive and reports late. For a failed run, it's up to the error result. It's shown as seconds and as a share of all worker time, with lost and failed work listed separately.
+- **Wasted work:** worker time that produced no answer, measured from assignment. For a task taken from a worker, that's up to the worker's last heartbeat, or up to its result if it turns out to be alive and reports late. For a failed run, it's up to the error result, and for an outvoted run, up to its result. It's shown as seconds and as a share of all worker time, with lost, failed and outvoted work listed separately. Worker time counts every run, so with replication it's at least twice the useful work; tasks are counted once each. `make metrics` also shows how many extra runs mismatches caused.
 
 Times are spans on the coordinator's clock rather than what workers report, so they work for failed runs and don't depend on the workers' clocks. They include time on the network.
 
@@ -202,16 +199,26 @@ Workers and tasks are stored in Redis under `antsearch:` keys (the layout is des
 |---|---|---|
 | `POST /workers/register` | `{"worker_id": "w1"}` | `{"worker_id", "registered": true, "heartbeat_timeout"}` |
 | `POST /workers/{id}/heartbeat` | none | `{"worker_id", "status": "online"}`; 404 if not registered |
-| `GET /workers` | none | Every worker with its status, last heartbeat and assigned tasks |
+| `GET /workers` | none | Every worker with its status, last heartbeat, assigned tasks, how many of its results were outvoted (`disputed`) and whether it's `flagged` |
 | `POST /tasks` | `{"star_ids": ["WASP-18", ...]}`, optionally with `"num_sectors": [2, ...]`, one per star, to set each task's type | 201, `{"task_ids": ["t1", ...]}`; 422 if `num_sectors` doesn't match `star_ids` |
 | `POST /tasks/request` | `{"worker_id": "w1"}` | `{"task_id", "star_id"}`; 204 if no task is available for this worker; 404 if not registered; 409 if offline |
-| `POST /tasks/{id}/result` | `{"worker_id": "w1", "result": {...}}` | `{"task_id", "status": "done"}`; 409 if the task isn't assigned to that worker |
-| `GET /tasks/{id}` | none | The task's star, status, worker, timestamps and result |
+| `POST /tasks/{id}/result` | `{"worker_id": "w1", "result": {...}}` | `{"task_id", "status"}`: `done` once enough results match, `assigned` or `pending` while it waits for more; 409 if the task isn't assigned to that worker |
+| `GET /tasks/{id}` | none | The task's star and status, and its `runs` (each worker's status, timestamps, result and, once settled, verdict). Once done: the accepted `result`, the `worker_id` it came from, the `outcome` and `completed_at` |
 | `GET /health` | none | `{"status": "ok"}`, or 503 if Redis is unreachable |
 
 The coordinator started with `python -m antsearch.coordinator` uses round robin unless `SCHEDULER` says otherwise (see [Schedulers](#schedulers)). Online workers without a running task take turns in worker-ID order. A worker requesting out of turn gets 204 and tries again after its normal polling interval. Busy and offline workers are skipped. A worker that finishes can keep taking work while the others are busy. An idle worker that stops requesting work but continues sending heartbeats can delay the others; it remains eligible until it takes work or goes offline.
 
-`Scheduler.assign(worker_id, tasks, workers)` returns a pending task ID or `None`. It does not change Redis. The coordinator serializes scheduling and claims the selected task in a Redis transaction. `on_result(worker_id, result)` is called after an accepted result; round robin does not use the result to change its choices. The `create_app` factory accepts a scheduler argument; omitting it keeps the original FIFO behavior for existing callers and tests.
+`Scheduler.assign(worker_id, tasks, workers)` returns a pending task ID or `None`. It does not change Redis. The coordinator serializes scheduling and claims the selected task in a Redis transaction. `on_result(worker_id, result, task_id, seconds, disputed)` is called for each run of a task once the task is settled, with `disputed` set if the run's result was outvoted (or nothing was agreed); round robin does not use it. `create_app` takes a `scheduler` argument; without one it hands out tasks in queue order.
+
+### Replication
+
+Each star runs on `REPLICAS` different workers (default 2) and is accepted once that many results match ([validation.py](src/antsearch/validation.py)). Two results match if they have the same keys and values. Timings (keys ending in `_seconds`) are ignored, and numbers may differ by a relative 1e-6, since two machines can round the same calculation differently. Failed runs match if they failed with the same error type, so a star MAST has no data for is accepted as failed.
+
+When the results disagree, another worker that hasn't run the star gets a further run, up to `2 * REPLICAS - 1` runs (3 by default), so the majority wins. If still no two agree, the task is done with outcome `unresolved` and an `Unresolved` error as its result.
+
+A worker whose answer is outvoted is flagged. `GET /workers` shows `"flagged": true` and how many of its results were `disputed`, the run log records `result_disputed`, and the ant scheduler gives it no pheromone for that run. A failed run also gets another run, but no flag: a download error isn't a wrong answer.
+
+A worker never runs the same star twice, so settling a mismatch needs a worker that hasn't run it yet. That's why the compose stack has three workers. With only two, a disputed star waits until a third one joins. `REPLICAS=1 make up` turns replication off; each star then takes the first result, as before. The coordinator from `create_app` on its own doesn't replicate either.
 
 ### Schedulers
 
@@ -236,7 +243,9 @@ pheromone ** alpha * speed ** beta / (the same, summed over the available worker
 
 `pheromone` is the worker's level in the [pheromone table](#pheromone-table) for the type of the task at the front of the queue, and `speed` is 1 / its estimated task time, the same moving average greedy uses. `alpha` (`SCHEDULER_ALPHA`, default 1) sets how much the learned pheromone counts, and `beta` (`SCHEDULER_BETA`, default 4) how much the current speed counts. The defaults come from the [parameter sweep](docs/parameter-sweep.md). With both at 0 the choice is uniform, like `random`. A slower worker keeps a smaller but non-zero chance, so it is still tried now and then. A worker with no timed result yet counts as fast as the fastest measured one, so new workers get tried; one whose results have all failed counts as slow as the slowest. Like `random`, the choice stands until that worker asks, so polling more often doesn't win more tasks. The run log's `coordinator_started` line records `alpha` and `beta` for an ant run.
 
-**Evaporation and deposit.** Every task that finishes is a round. First every stored level evaporates: it's multiplied by `1 - evaporation` (`SCHEDULER_EVAPORATION`, default 0.2). Then the worker that finished earns a deposit for that task's type:
+#### Evaporation and deposit
+
+Every run of a task is a round, applied once the task is settled. First every stored level evaporates: it's multiplied by `1 - evaporation` (`SCHEDULER_EVAPORATION`, default 0.2). Then the worker that finished earns a deposit for that task's type:
 
 ```
 deposit = evaporation * typical / seconds
@@ -248,7 +257,7 @@ deposit = evaporation * typical / seconds
 |---|---|
 | Failed | It has an `error` key |
 | Late | It took more than `SCHEDULER_LATE_FACTOR` (default 3) times the typical time for its type |
-| Disputed | Its answer didn't match another worker's. Nothing marks a result disputed yet; that comes with replication |
+| Disputed | Other workers outvoted its answer, or no answer was agreed (see [Replication](#replication)) |
 
 Levels stay between 0.2 and 1, as in MAX-MIN Ant System (Stützle and Hoos, 2000). Without the ceiling, whichever worker wins the first few tasks earns more pheromone, so it wins more and soon takes almost everything (Ant System's "stagnation"). The floor keeps a punished worker in the running, so it is still tried now and then. A pair nobody has written yet reads as 1, so a new worker gets tried. With `SCHEDULER_EVAPORATION=0`, levels never change.
 
@@ -258,17 +267,22 @@ What to expect, with tasks handed out one at a time so both workers are free at 
 - Two equal workers still drift apart for stretches: over 50 tasks, one's share ranged from 10% to 76% across the same seeds, against 32% to 64% with evaporation off. A lower evaporation rate is fairer to equal workers but punishes slower. The [parameter sweep](docs/parameter-sweep.md) found the rate makes almost no difference to turnaround, so it stays at 0.2.
 - Simulated workers all report the same time, so between them only luck separates the levels.
 
-**Joining and leaving.** A worker joins by registering. If it sends no heartbeat for longer than the timeout, the coordinator marks it `offline`. A background check runs every third of the timeout, and `GET /workers` and `POST /tasks/request` also check first. When a worker is marked offline, its unfinished tasks go back to the front of the queue for another worker. An offline worker gets 409 on task requests and result submissions until it sends a heartbeat or registers again. A worker that registers again after a restart gives up any tasks it held, since it lost them in the restart.
+#### Joining and leaving
+
+A worker joins by registering. If it sends no heartbeat for longer than the timeout, the coordinator marks it `offline`. A background check runs every third of the timeout, and `GET /workers` and `POST /tasks/request` also check first. When a worker is marked offline, its unfinished tasks go back to the front of the queue for another worker. An offline worker gets 409 on task requests and result submissions until it sends a heartbeat or registers again. A worker that registers again after a restart gives up any tasks it held, since it lost them in the restart.
 
 Try it against `make up`:
 
 ```bash
 curl -X POST localhost:8000/tasks -H 'content-type: application/json' -d '{"star_ids": ["WASP-18"]}'
-curl -X POST localhost:8000/tasks/request -H 'content-type: application/json' -d '{"worker_id": "worker-1"}'
+curl -X POST localhost:8000/workers/register -H 'content-type: application/json' -d '{"worker_id": "me"}'
+curl -X POST localhost:8000/tasks/request -H 'content-type: application/json' -d '{"worker_id": "me"}'
 curl -X POST localhost:8000/tasks/t1/result -H 'content-type: application/json' \
-     -d '{"worker_id": "worker-1", "result": {"period": 0.94136}}'
+     -d '{"worker_id": "me", "result": {"period": 0.94136}}'
 curl localhost:8000/tasks/t1
 ```
+
+The compose workers are asking for work too, so the request may get 204 (repeat it, or queue another star). Once the compose workers have run the star, their real results outvote the made-up one: `curl localhost:8000/tasks/t1` shows the verdict for each run, and `curl localhost:8000/workers` shows `me` flagged.
 
 ### Pheromone table
 
@@ -326,6 +340,7 @@ AntSearch/
 │   ├── scenario.py     # failure scenarios: CPU limits, network delay, kills and restarts on a timeline
 │   ├── submit.py       # queue stars from a star list and wait for the results
 │   ├── sweep.py        # parameter sweep: the ant scheduler on simulated workloads
+│   ├── validation.py   # comparing results from different workers, and settling a task
 │   ├── worker.py       # worker: registers, heartbeats, pulls tasks, runs them, reports results
 │   └── datasets/       # TESS star list (tess_data_mixed.csv) and the script that rebuilt it
 ├── docs/               # parameter sweep write-up and results, references
@@ -334,7 +349,7 @@ AntSearch/
 ├── Makefile            # build, run, test and coverage shortcuts (`make help`)
 ├── pyproject.toml      # package metadata, dependencies, pytest config
 ├── Dockerfile          # one image for the coordinator and the workers
-├── compose.yaml        # local cluster: redis, coordinator, worker-1, worker-2
+├── compose.yaml        # local cluster: redis, coordinator, worker-1 to worker-3
 └── .github/workflows/  # CI
 ```
 

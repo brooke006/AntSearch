@@ -78,8 +78,8 @@ def summarize(tasks: list[dict], elapsed: float) -> str:
             outcome = f"P = {result['period']:.5f} d, depth = {result['depth'] * 1e6:.0f} ppm"
         else:
             outcome = "done"
-        lines.append(f"{task['task_id']:>6}  {task['star_id']:<12} {task['worker_id']:<12} {outcome}")
-    per_worker = Counter(task["worker_id"] for task in tasks)
+        lines.append(f"{task['task_id']:>6}  {task['star_id']:<12} {task.get('worker_id') or '-':<12} {outcome}")
+    per_worker = Counter(task["worker_id"] for task in tasks if task.get("worker_id"))
     failed = sum("error" in task["result"] for task in tasks)
     lines.append("")
     lines.append(f"{len(tasks)} tasks in {elapsed:.0f} s, {failed} failed")

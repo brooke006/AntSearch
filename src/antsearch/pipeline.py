@@ -10,7 +10,6 @@ Exit codes:
     1  period recovered but outside --tolerance
     3  no matching data on MAST, or the target name can't be resolved (retrying won't help)
     4  download failed after every retry (MAST unreachable or kept failing; try again later)
-(2 is argparse's code for bad command-line arguments.)
 """
 
 import argparse
@@ -61,14 +60,10 @@ def download_light_curve(
     backoff: float = 2.0,
     download_dir: str | Path | None = None,
 ):
-    """Fetch one 2-minute-cadence TESS light curve from MAST as a lightkurve LightCurve.
+    """Fetch one 2-minute-cadence TESS light curve from MAST, using the cache in download_dir.
 
-    Downloads are cached in download_dir (lightkurve's cache by default): a repeat call for the
-    same target, sector and author reads the file from disk without contacting MAST.
-
-    Network and MAST errors are retried up to `attempts` times, waiting backoff, 2 x backoff, ...
-    seconds in between. A cached file that fails to read (usually a download cut off on an earlier
-    run) is deleted before the next attempt, so it gets downloaded again.
+    Network and MAST errors are retried up to `attempts` times with doubling backoff. A cached
+    file that won't read is deleted and downloaded again.
     """
     import lightkurve as lk
     from astroquery.exceptions import RemoteServiceError

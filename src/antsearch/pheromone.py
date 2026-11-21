@@ -1,20 +1,7 @@
 """Pheromone table: how well each worker handles each type of task, kept in Redis.
 
-The ant colony scheduler remembers who handles what well by keeping a pheromone level for every
-(worker, task type) pair. Task types split the stars by how much light curve they have:
-
-    short           one TESS sector or none (about 27 days of data at most)
-    multi_sector    two or more sectors
-
-Redis keys, one hash per task type so the scheduler can read every worker's level for a task's
-type in one call:
-
-    antsearch:pheromone:<task type>     hash: worker ID -> pheromone level (float)
-
-Levels live in Redis rather than in the coordinator's memory, so a coordinator that restarts
-picks up where it left off. A pair with no entry yet has the initial level. This module stores
-levels and can evaporate them all at once; when to evaporate and how much to deposit is up to the
-scheduler (see AntScheduler.on_result).
+Task types are short (one TESS sector or none) and multi_sector (two or more). Each type is a
+hash, antsearch:pheromone:<type>, of worker ID -> level, so levels survive a coordinator restart.
 """
 
 import math
@@ -53,10 +40,8 @@ def _check_level(level: float, name: str = "level") -> float:
 class PheromoneTable:
     """Pheromone levels per (worker, task type), stored in Redis.
 
-    Reads never write: a pair that has never been set reads as initial_level until something
-    sets or adds to it. Every write is a single Redis command, so writes from several threads
-    or processes don't lose each other's updates. Pass a client made with decode_responses=True,
-    as the coordinator's is, so worker IDs come back as strings.
+    A pair that has never been set reads as initial_level. Pass a client made with
+    decode_responses=True.
     """
 
     def __init__(self, redis_client: redis.Redis, initial_level: float = DEFAULT_INITIAL_LEVEL):
@@ -85,11 +70,7 @@ class PheromoneTable:
         self.redis.hset(pheromone_key(task_type), worker_id, _check_level(level))
 
     def add(self, worker_id: str, task_type: str, amount: float, maximum: float | None = None) -> float:
-        """Add amount (>= 0) to a level, starting from the initial level, and return the new level.
-
-        With maximum, the level is capped there; that read-and-write is one transaction watching
-        the hash, retried if anything else writes to it first.
-        """
+        """Add amount (>= 0) to a level, capped at maximum if given, and return the new level."""
         _check_task_type(task_type)
         amount = _check_level(amount, "amount")
         key = pheromone_key(task_type)
@@ -118,11 +99,7 @@ class PheromoneTable:
         self.redis.hsetnx(pheromone_key(task_type), worker_id, self.initial_level)
 
     def evaporate(self, rate: float, minimum: float = 0.0) -> None:
-        """Multiply every stored level by (1 - rate), keeping each at or above minimum.
-
-        Pairs never written stay at the initial level. Each task type's hash is rewritten in one
-        Redis transaction that watches it, so a deposit that lands mid-way is retried, not lost.
-        """
+        """Multiply every stored level by (1 - rate), keeping each at or above minimum."""
         if isinstance(rate, bool) or not isinstance(rate, (int, float)) or not 0 <= rate <= 1:
             raise ValueError(f"rate must be between 0 and 1, not {rate!r}")
         minimum = _check_level(minimum, "minimum")
