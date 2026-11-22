@@ -27,7 +27,7 @@ def ok(seconds=1.0):
     return {"compute_seconds": seconds}
 
 
-# --- PheromoneTable.evaporate and capped add ---------------------------------------------------
+# PheromoneTable.evaporate and capped add
 
 
 def test_evaporate_scales_every_stored_level(table):
@@ -94,7 +94,7 @@ def test_capped_add_stops_at_the_maximum(table):
     assert table.get("w1", SHORT) == 1.0
 
 
-# --- One round: evaporate, then deposit or not --------------------------------------------------
+# One round: evaporate, then deposit or not
 
 
 def scheduler_with_types(table, **kwargs):
@@ -268,7 +268,7 @@ def test_copy_keeps_its_own_typical_times(table):
     assert scheduler.typical == {SHORT: 10.0}
 
 
-# --- A worker that slows down loses share ------------------------------------------------------
+# A worker that slows down loses share
 
 
 def play(scheduler, speeds, rounds, first_task=0):
@@ -333,7 +333,7 @@ def test_a_fresh_good_run_outweighs_an_old_reputation(table):
     assert scheduler.probabilities(SHORT, ["w1", "w2"])["w1"] < 0.3
 
 
-# --- Through the coordinator -------------------------------------------------------------------
+# Through the coordinator
 
 
 def test_coordinator_times_tasks_on_its_own_clock_and_logs_the_outcome(redis_client, tmp_path):
@@ -353,7 +353,7 @@ def test_coordinator_times_tasks_on_its_own_clock_and_logs_the_outcome(redis_cli
 
     # The worker claimed 0.1 s each time, but the coordinator timed 10 s and then 40 s: late.
     done = [event for event in read_events(tmp_path / "run.jsonl") if event["event"] == "task_done"]
-    assert [event["pheromone"] for event in done] == ["deposited", "late", "failed"]
+    assert [event["pheromone"] for event in done] == [{"w1": "deposited"}, {"w1": "late"}, {"w1": "failed"}]
     # Deposited at the ceiling, then two rounds of evaporation with nothing added.
     assert table.get("w1", SHORT) == pytest.approx(1.0 * 0.8 * 0.8)
 

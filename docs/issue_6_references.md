@@ -1,14 +1,14 @@
 # Reference Check  
 | Ref | Status | Notes |
 |-----|--------|-------|
-| [1] Dorigo et al. 1996 | ✅ Verified | No changes. Supports Eqs. 1, 3, 4 (p. 31) |
-| [2] Dorigo & Gambardella 1997 | ✅ Verified | No changes (confirm DOI link). Supports both [1, 2] citations: Sec. II p. 54, Eqs. 1-2 p. 55. Uses "stigmergy" (p. 55). Lead: Schoonderwoerd et al. 1997 (p. 64) |
-| [3] Anderson 2004 | ✅ Verified | No changes. Supports SETI@home/BOINC claim (Sec. 1 p. 4; Sec. 2.2 p. 5). |
-| [4] Ricker et al. 2015 | ⚠️ Corrected | Year changed 2014 → 2015. Published online Oct. 24, 2014, but assigned to Vol. 1(1), Jan–Mar 2015 (see journal citation line, p. 014003-1). |
-| [5] Kovács et al. 2002 | ✅ Verified | No changes. Original BLS paper; defines Box-fitting Least Squares (Sec. 2). |
-| [6] Deneubourg et al. 1990 | ✅ Verified | No changes to citation. Supports ant trail-laying/following. Flag: Discussion cites [6] for "ant and termite" stigmergy; paper covers ants only and summary doesn't use "stigmergy." Suggest citing [2, 6] (stigmergy on [2] p. 55). |
-| [7] Lightkurve 2018 | ✏️ Updated | Details verified against ASCL record and developers' preferred citation (ADS 2018ascl.soft12013L). Added URL https://ascl.net/1812.013 since no DOI exists. |
-| [8] Astropy 2022 | ✅ Verified | No changes. BLS periodogram in astropy.timeseries (Sec. II.2.1, "Time series"). Also: MAST contributes to astroquery, which Lightkurve uses (Sec. IV.3). |
+| [1] Dorigo et al. 1996 | Verified | No changes. Supports Eqs. 1, 3, 4 (p. 31) |
+| [2] Dorigo & Gambardella 1997 | Verified | No changes (confirm DOI link). Supports both [1, 2] citations: Sec. II p. 54, Eqs. 1-2 p. 55. Uses "stigmergy" (p. 55). Lead: Schoonderwoerd et al. 1997 (p. 64) |
+| [3] Anderson 2004 | Verified | No changes. Supports SETI@home/BOINC claim (Sec. 1 p. 4; Sec. 2.2 p. 5). |
+| [4] Ricker et al. 2015 | Corrected | Year changed from 2014 to 2015. Published online Oct. 24, 2014, but assigned to Vol. 1(1), Jan–Mar 2015 (see journal citation line, p. 014003-1). |
+| [5] Kovács et al. 2002 | Verified | No changes. Original BLS paper; defines Box-fitting Least Squares (Sec. 2). |
+| [6] Deneubourg et al. 1990 | Verified | No changes to citation. Supports ant trail-laying/following. Flag: Discussion cites [6] for "ant and termite" stigmergy; paper covers ants only and summary doesn't use "stigmergy." Suggest citing [2, 6] (stigmergy on [2] p. 55). |
+| [7] Lightkurve 2018 | Updated | Details verified against ASCL record and developers' preferred citation (ADS 2018ascl.soft12013L). Added URL https://ascl.net/1812.013 since no DOI exists. |
+| [8] Astropy 2022 | Verified | No changes. BLS periodogram in astropy.timeseries (Sec. II.2.1, "Time series"). Also: MAST contributes to astroquery, which Lightkurve uses (Sec. IV.3). |
 
 # New Sources
 ## Huang, Deng & Wen (2009): Trust-based ACO for Grid Resource Scheduling

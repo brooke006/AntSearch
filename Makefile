@@ -29,7 +29,7 @@ install: ## Install the package with dev and science extras
 build: ## Build the Docker image (IMAGE=antsearch:dev)
 	docker build -t $(IMAGE) .
 
-up: ## Start redis, the coordinator and two workers in the background on http://localhost:8000
+up: ## Start redis, the coordinator and three workers in the background on http://localhost:8000
 	mkdir -p $${RUN_LOG_DIR:-output/runs}
 	$(COMPOSE) up --build -d --wait
 
@@ -58,7 +58,7 @@ sweep: ## Simulate the ant scheduler over a grid of alpha, beta and evaporation;
 test: ## Unit and science tests: everything that doesn't need a running stack
 	$(PYTEST) -m "not integration"
 
-test-unit: ## Fast tests only: coordinator, worker, submit, scenarios, run logs, pheromone table, package
+test-unit: ## Fast tests only: coordinator, replication, worker, submit, scenarios, run logs, pheromone table, package
 	$(PYTEST) -m "not science and not integration"
 
 test-science: ## Light-curve pipeline tests (synthetic data, no network)

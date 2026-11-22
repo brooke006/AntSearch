@@ -7,8 +7,10 @@ Skipped unless ANTSEARCH_URL points at a coordinator. Use a short HEARTBEAT_TIME
 so the compose workers don't download from MAST.
 
 The compose workers pull from the same queue as these tests, so tasks a test queues may be run by
-either of them. The failure-scenario test also needs ANTSEARCH_COMPOSE_PROJECT (make test-integration
-sets antsearch-it) and the docker CLI; it runs last because it kills worker-2 for a while.
+any of them. Each task runs on two workers, so a test worker that wants its result accepted
+reports what the compose workers' simulated task does. The failure-scenario test also needs
+ANTSEARCH_COMPOSE_PROJECT (make test-integration sets antsearch-it) and the docker CLI; it runs
+last because it kills worker-2 for a while.
 """
 
 import os
@@ -67,14 +69,21 @@ def workers(api):
     return {w["worker_id"]: w for w in api.get("/workers").json()["workers"]}
 
 
+COMPOSE_WORKERS = {"worker-1", "worker-2", "worker-3"}
+
+
+def simulated(star_id):
+    """What a compose worker running the simulated task reports for star_id, give or take its timing."""
+    return {"star_id": star_id, "simulated": True, "compute_seconds": 0.0}
+
+
 def test_coordinator_is_healthy(api):
     assert api.get("/health").json() == {"status": "ok"}
 
 
 def test_compose_workers_register_and_stay_online(api):
     found = workers(api)
-    assert found["worker-1"]["status"] == "online"
-    assert found["worker-2"]["status"] == "online"
+    assert all(found[worker_id]["status"] == "online" for worker_id in COMPOSE_WORKERS)
 
 
 def test_task_round_trip(api):
@@ -82,11 +91,32 @@ def test_task_round_trip(api):
     assert api.post(f"/workers/{worker_id}/heartbeat").json()["status"] == "online"
     task_id = take_task(api, worker_id)
 
-    response = api.post(f"/tasks/{task_id}/result", json={"worker_id": worker_id, "result": {"period": 0.94136}})
+    response = api.post(f"/tasks/{task_id}/result", json={"worker_id": worker_id, "result": simulated("WASP-19")})
 
-    assert response.json() == {"task_id": task_id, "status": "done"}
-    task = api.get(f"/tasks/{task_id}").json()
-    assert (task["status"], task["worker_id"], task["result"]) == ("done", worker_id, {"period": 0.94136})
+    assert response.status_code == 200
+    (task,) = wait_until_done(api, [task_id])  # once a compose worker's run agrees
+    assert (task["status"], task["outcome"]) == ("done", "accepted")
+    mine = next(run for run in task["runs"] if run["worker_id"] == worker_id)
+    assert mine["verdict"] == "accepted"
+    assert workers(api)[worker_id]["flagged"] is False
+
+
+def test_a_worker_that_returns_garbage_is_outvoted_and_flagged(api):
+    worker_id, _ = new_worker(api)
+    task_id = take_task(api, worker_id)
+    garbage = {**simulated("WASP-19"), "period": 123.456}
+
+    api.post(f"/tasks/{task_id}/result", json={"worker_id": worker_id, "result": garbage}).raise_for_status()
+
+    # The compose worker running the other copy disagrees, so a third one breaks the tie.
+    (task,) = wait_until_done(api, [task_id])
+    assert task["outcome"] == "accepted"
+    assert "period" not in task["result"] and task["worker_id"] in COMPOSE_WORKERS
+    verdicts = {run["worker_id"]: run["verdict"] for run in task["runs"]}
+    assert verdicts.pop(worker_id) == "disputed"
+    assert len(verdicts) == 2 and set(verdicts.values()) == {"accepted"}
+    flagged = workers(api)[worker_id]
+    assert (flagged["flagged"], flagged["disputed"]) == (True, 1)
 
 
 def test_compose_workers_process_50_stars(api):
@@ -96,7 +126,11 @@ def test_compose_workers_process_50_stars(api):
     tasks = wait_until_done(api, task_ids)
 
     assert [task["result"]["star_id"] for task in tasks] == star_ids
-    assert {task["worker_id"] for task in tasks} == {"worker-1", "worker-2"}
+    assert all(task["outcome"] == "accepted" for task in tasks)
+    assert len({task["worker_id"] for task in tasks}) >= 2
+    runs = [run for task in tasks for run in task["runs"]]
+    assert {run["worker_id"] for run in runs} <= COMPOSE_WORKERS
+    assert all(len({run["worker_id"] for run in task["runs"]}) == len(task["runs"]) >= 2 for task in tasks)
 
 
 def test_silent_worker_goes_offline_and_another_worker_finishes_its_task(api):
@@ -113,7 +147,7 @@ def test_silent_worker_goes_offline_and_another_worker_finishes_its_task(api):
     # The task went back on the queue, and a compose worker (which heartbeats every timeout/3,
     # so outlives the silent one) picked it up.
     (task,) = wait_until_done(api, [task_id])
-    assert task["worker_id"] in {"worker-1", "worker-2"}
+    assert task["worker_id"] in COMPOSE_WORKERS
     assert workers(api)["worker-1"]["status"] == "online"
 
 

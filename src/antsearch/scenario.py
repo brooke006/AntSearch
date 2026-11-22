@@ -14,21 +14,12 @@ A scenario file lists events, each at a number of seconds after the scenario sta
       - {at: 60, worker: worker-2, action: start}              # start a killed worker again
       - {at: 75, worker: worker-1, action: restart}            # kill, then start straight away
 
-Every run starts from the same state: before the first event, each worker the scenario names is
-started if it isn't running, and its CPU limit and delay are removed. Events are timed from that
-point, so a slow docker command makes its own event late but not the ones after it. Events at the
-same time run in file order. After the last event the scenario holds until `duration` (or Ctrl-C /
-SIGTERM if there's none), then resets the workers again.
-
-A worker's delay lives in its container's network namespace, which a kill throws away, so it's set
-again whenever the scenario starts that worker. The CPU limit is part of the container's config
-and survives on its own.
+The workers are reset before the first event and again at the end.
 
 Exit codes:
     0  every event applied
-    1  some events failed (each is logged, with its error, and the scenario carries on)
-    3  couldn't reach the workers (is the stack up?), so no events ran
-(2 is argparse's code for bad command-line arguments or an invalid scenario file.)
+    1  some events failed
+    3  couldn't reach the workers (is the stack up?)
 """
 
 import argparse

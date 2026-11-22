@@ -2,15 +2,19 @@
 
 Every line has a time (Unix seconds on the coordinator's clock) and an event, plus:
 
-    coordinator_started   scheduler, seed, heartbeat_timeout (plus alpha, beta, evaporation, late_factor
-                          for the ant scheduler)
+    coordinator_started   scheduler, seed, heartbeat_timeout, replicas (plus alpha, beta, evaporation,
+                          late_factor for the ant scheduler)
     worker_registered     worker_id
     worker_offline        worker_id, last_heartbeat
     worker_online         worker_id
     task_queued           task_id, star_id
-    task_assigned         task_id, star_id, worker_id
-    task_done             task_id, worker_id, result (a failed run's result has an "error" key), and
-                          for the ant scheduler pheromone (deposited, failed, late or disputed)
+    task_assigned         task_id, star_id, worker_id (one per run; a replicated task has several)
+    result_received       task_id, worker_id, result (a failed run's result has an "error" key)
+    task_rerun            task_id, runs, reason: the results so far disagree, so more runs were queued
+    result_disputed       task_id, worker_id, result: a result outvoted by the others; the worker is flagged
+    task_done             task_id, result, outcome (accepted or unresolved), agreed (the workers whose
+                          results matched), worker_id (the first of them), and for the ant scheduler
+                          pheromone ({worker: deposited, failed, late or disputed} for each run)
     task_requeued         task_id, worker_id, reason (offline or reregistered), last_heartbeat
     result_rejected       task_id, worker_id, status, result
 
@@ -31,8 +35,8 @@ log = logging.getLogger("antsearch.runlog")
 class RunLog:
     """Appends events to a JSON-lines file, flushing each one so a killed coordinator loses nothing.
 
-    With no path it records nothing. A failed write is logged rather than raised: a full disk
-    shouldn't stop the cluster, whose state has already changed by the time an event is recorded.
+    With no path it records nothing. A failed write is logged, not raised, so a full disk doesn't
+    stop the cluster.
     """
 
     def __init__(self, path: str | Path | None = None, clock: Callable[[], float] = time.time):

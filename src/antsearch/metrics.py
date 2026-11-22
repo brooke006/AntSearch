@@ -3,18 +3,8 @@
     python -m antsearch.metrics                                 # the newest log in output/runs
     python -m antsearch.metrics output/runs/<run>.jsonl
 
-Completion time is from the first task queued to the last task finished. Turnaround is the same for
-each task on its own, averaged; with a full queue every scheduler has about the same choices, so
-turnaround under gradual arrivals shows differences that completion time doesn't.
-
-Throughput is tasks that succeeded per minute of completion time. Failed runs don't count, so a
-worker that fails quickly can't look fast.
-
-Wasted work is worker time that produced no answer, from assignment to:
-    the worker's last heartbeat, for a task taken away from it (it may have been running since,
-        but nothing shows that)
-    the late result, if the worker turned out to be alive and reported after losing the task
-    the error result, for a run that failed
+Wasted work is worker time spent on runs that were lost, failed or outvoted. The README explains
+how each metric is measured.
 """
 
 import argparse
@@ -38,8 +28,18 @@ def compute(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
     finished = {}  # task ID -> time
     running = {}  # (task ID, worker ID) -> time assigned
     taken_away = {}  # (task ID, worker ID) -> (time assigned, seconds already counted as lost)
-    succeeded = failed = lost_runs = late_results = 0
-    useful_seconds = failed_seconds = lost_seconds = 0.0
+    run_seconds = {}  # (task ID, worker ID) -> how long its finished run took
+    succeeded = failed = lost_runs = late_results = disputed_runs = reruns = 0
+    useful_seconds = failed_seconds = lost_seconds = disputed_seconds = 0.0
+
+    def run_finished(key, time, result):
+        nonlocal useful_seconds, failed_seconds
+        seconds = time - running.pop(key, time)
+        run_seconds[key] = seconds
+        if "error" in result:
+            failed_seconds += seconds
+        else:
+            useful_seconds += seconds
 
     for event in events:
         name, time = event["event"], event["time"]
@@ -51,15 +51,23 @@ def compute(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
             queued[event["task_id"]] = time
         elif name == "task_assigned":
             running[key] = time
+        elif name == "result_received":
+            run_finished(key, time, event["result"])
+        elif name == "result_disputed" and key in run_seconds:
+            seconds = run_seconds.pop(key)
+            disputed_runs += 1
+            disputed_seconds += seconds
+            useful_seconds -= seconds
+        elif name == "task_rerun":
+            reruns += event["runs"]
         elif name == "task_done":
-            seconds = time - running.pop(key, time)
+            if key in running:  # a log from before replication: this was also the run's result
+                run_finished(key, time, event["result"])
             finished[event["task_id"]] = time
             if "error" in event["result"]:
                 failed += 1
-                failed_seconds += seconds
             else:
                 succeeded += 1
-                useful_seconds += seconds
         elif name == "task_requeued" and key in running:
             assigned = running.pop(key)
             seconds = max(0.0, event["last_heartbeat"] - assigned)
@@ -74,7 +82,7 @@ def compute(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
 
     completion = max(finished.values()) - min(queued.values()) if finished and queued else None
     turnarounds = [finished[task] - queued[task] for task in finished if task in queued]
-    wasted = failed_seconds + lost_seconds
+    wasted = failed_seconds + lost_seconds + disputed_seconds
     worker_seconds = useful_seconds + wasted
     return {
         "schedulers": schedulers,
@@ -92,6 +100,9 @@ def compute(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
         "late_results": late_results,
         "lost_seconds": lost_seconds,
         "failed_seconds": failed_seconds,
+        "disputed_runs": disputed_runs,
+        "disputed_seconds": disputed_seconds,
+        "reruns": reruns,
     }
 
 
@@ -117,7 +128,9 @@ def report(metrics: dict[str, Any]) -> str:
         f"  lost with a worker: {metrics['lost_seconds']:.1f} s "
         f"(runs lost: {metrics['lost_runs']}, reported too late: {metrics['late_results']})"
     )
-    lines.append(f"  failed runs:        {metrics['failed_seconds']:.1f} s (runs failed: {metrics['tasks_failed']})")
+    lines.append(f"  failed runs:        {metrics['failed_seconds']:.1f} s (tasks failed: {metrics['tasks_failed']})")
+    lines.append(f"  outvoted runs:      {metrics['disputed_seconds']:.1f} s (runs outvoted: {metrics['disputed_runs']})")
+    lines.append(f"extra runs:      {metrics['reruns']} (queued because results disagreed)")
     return "\n".join(lines)
 
 
