@@ -2,15 +2,17 @@
 
     python -m antsearch.metrics                                 # the newest log in output/runs
     python -m antsearch.metrics output/runs/<run>.jsonl
+    python -m antsearch.metrics --save docs/runs              # keep the log and its report in docs/runs
 
 Wasted work is worker time spent on runs that were lost, failed or outvoted. The README explains
-how each metric is measured.
+how each metric is measured. The report ends with a line per worker and the machine it ran on.
 """
 
 import argparse
 import json
 import logging
 import os
+import shutil
 import sys
 from collections.abc import Iterable
 from pathlib import Path
@@ -29,17 +31,27 @@ def compute(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
     running = {}  # (task ID, worker ID) -> time assigned
     taken_away = {}  # (task ID, worker ID) -> (time assigned, seconds already counted as lost)
     run_seconds = {}  # (task ID, worker ID) -> how long its finished run took
+    workers = {}  # worker ID -> its own counts
     succeeded = failed = lost_runs = late_results = disputed_runs = reruns = 0
     useful_seconds = failed_seconds = lost_seconds = disputed_seconds = 0.0
+
+    def worker(worker_id):
+        return workers.setdefault(
+            worker_id, {"machine": None, "runs": 0, "failed": 0, "outvoted": 0, "lost": 0, "answer_seconds": 0.0}
+        )
 
     def run_finished(key, time, result):
         nonlocal useful_seconds, failed_seconds
         seconds = time - running.pop(key, time)
         run_seconds[key] = seconds
+        counts = worker(key[1])
+        counts["runs"] += 1
         if "error" in result:
             failed_seconds += seconds
+            counts["failed"] += 1
         else:
             useful_seconds += seconds
+            counts["answer_seconds"] += seconds
 
     for event in events:
         name, time = event["event"], event["time"]
@@ -47,6 +59,8 @@ def compute(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
         if name == "coordinator_started":
             if event["scheduler"] not in schedulers:
                 schedulers.append(event["scheduler"])
+        elif name == "worker_registered":
+            worker(event["worker_id"])["machine"] = event.get("machine") or worker(event["worker_id"])["machine"]
         elif name == "task_queued":
             queued[event["task_id"]] = time
         elif name == "task_assigned":
@@ -58,6 +72,7 @@ def compute(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
             disputed_runs += 1
             disputed_seconds += seconds
             useful_seconds -= seconds
+            worker(key[1])["outvoted"] += 1
         elif name == "task_rerun":
             reruns += event["runs"]
         elif name == "task_done":
@@ -74,6 +89,7 @@ def compute(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
             lost_runs += 1
             lost_seconds += seconds
             taken_away[key] = (assigned, seconds)
+            worker(key[1])["lost"] += 1
         elif name == "result_rejected" and key in taken_away:
             # Retried reports of an accepted result are rejected too, but they never lost the task.
             assigned, counted = taken_away.pop(key)
@@ -82,6 +98,9 @@ def compute(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
 
     completion = max(finished.values()) - min(queued.values()) if finished and queued else None
     turnarounds = [finished[task] - queued[task] for task in finished if task in queued]
+    for counts in workers.values():
+        answers = counts["runs"] - counts["failed"]
+        counts["mean_answer_seconds"] = counts.pop("answer_seconds") / answers if answers else None
     wasted = failed_seconds + lost_seconds + disputed_seconds
     worker_seconds = useful_seconds + wasted
     return {
@@ -103,7 +122,24 @@ def compute(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
         "disputed_runs": disputed_runs,
         "disputed_seconds": disputed_seconds,
         "reruns": reruns,
+        "workers": dict(sorted(workers.items())),
     }
+
+
+def describe(machine: dict[str, Any] | None) -> str:
+    """A short line for a worker's machine, e.g. "Darwin 24.1 arm64, Apple M2, 8 CPUs, 16 GB"."""
+    if not machine:
+        return "-"
+    parts = [" ".join(str(machine[key]) for key in ("os", "arch") if machine.get(key))]
+    if machine.get("cpu"):
+        parts.append(str(machine["cpu"]))
+    if machine.get("cpus"):
+        parts.append(f"{machine['cpus']} CPUs")
+    if machine.get("memory_gb"):
+        parts.append(f"{machine['memory_gb']:g} GB")
+    if machine.get("docker"):
+        parts.append("in Docker")
+    return ", ".join(part for part in parts if part)
 
 
 def report(metrics: dict[str, Any]) -> str:
@@ -116,7 +152,7 @@ def report(metrics: dict[str, Any]) -> str:
     )
     if metrics["completion_seconds"] is None:
         lines.append("no task has finished yet")
-        return "\n".join(lines)
+        return "\n".join(lines + worker_table(metrics["workers"]))
     if metrics["tasks_unfinished"]:
         lines.append("                 (still running or abandoned, so the times below cover the finished tasks only)")
     lines.append(f"completion time: {metrics['completion_seconds']:.1f} s")
@@ -131,7 +167,22 @@ def report(metrics: dict[str, Any]) -> str:
     lines.append(f"  failed runs:        {metrics['failed_seconds']:.1f} s (tasks failed: {metrics['tasks_failed']})")
     lines.append(f"  outvoted runs:      {metrics['disputed_seconds']:.1f} s (runs outvoted: {metrics['disputed_runs']})")
     lines.append(f"extra runs:      {metrics['reruns']} (queued because results disagreed)")
-    return "\n".join(lines)
+    return "\n".join(lines + worker_table(metrics["workers"]))
+
+
+def worker_table(workers: dict[str, dict[str, Any]]) -> list[str]:
+    if not workers:
+        return []
+    width = max(len("worker"), *(len(worker_id) for worker_id in workers))
+    lines = ["", f"{'worker':<{width}}  runs  failed  outvoted  lost  mean answer  machine"]
+    for worker_id, counts in workers.items():
+        mean = counts["mean_answer_seconds"]
+        mean = f"{mean:.1f} s" if mean is not None else "-"
+        lines.append(
+            f"{worker_id:<{width}}  {counts['runs']:>4}  {counts['failed']:>6}  {counts['outvoted']:>8}  "
+            f"{counts['lost']:>4}  {mean:>11}  {describe(counts['machine'])}"
+        )
+    return lines
 
 
 def newest_log(directory: str | Path) -> Path | None:
@@ -142,6 +193,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("log", nargs="?", type=Path, help="run log (default: the newest in RUN_LOG_DIR or output/runs)")
+    parser.add_argument("--save", type=Path, metavar="DIR", help="copy the log into DIR, with the report next to it as <run>.txt")
     args = parser.parse_args(argv)
 
     directory = os.environ.get("RUN_LOG_DIR") or DEFAULT_LOG_DIR
@@ -152,8 +204,17 @@ def main(argv: list[str] | None = None) -> int:
         events = read_events(path)
     except (OSError, json.JSONDecodeError) as exc:
         parser.error(f"can't read {path}: {exc}")
+    text = report(compute(events))
+    if args.save:
+        args.save.mkdir(parents=True, exist_ok=True)
+        saved = args.save / path.name
+        if saved.resolve() != path.resolve():
+            shutil.copyfile(path, saved)
+        saved.with_suffix(".txt").write_text(f"{saved}\n{text}\n")
+        print(f"saved {saved} and {saved.with_suffix('.txt')}")
+        path = saved
     print(path)
-    print(report(compute(events)))
+    print(text)
     return 0
 
 

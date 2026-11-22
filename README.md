@@ -30,10 +30,13 @@ The [Makefile](Makefile) wraps the common commands. Run `make` on its own to lis
 | `make install` | Install the package with the `dev` and `science` extras |
 | `make build` | Build the Docker image (`antsearch:dev`; override with `IMAGE=...`) |
 | `make up` / `make down` | Start or stop the local cluster in the background |
+| `make coordinator` | Start only Redis and the coordinator, for workers on other machines; see [Running across several machines](#running-across-several-machines) |
+| `make worker` | Run a worker on this machine (`COORDINATOR_URL=...` and `WORKER_ID=...`) |
 | `make logs` / `make ps` | Follow the cluster's logs / list its containers |
 | `make submit` | Queue the first 50 stars of the TESS list on the cluster and wait for the results (`STARS=...` for another count) |
 | `make scenario` | Run a failure scenario on the cluster (`SCENARIO=scenarios/slow-worker.yaml`); see [Failure scenarios](#failure-scenarios) |
 | `make metrics` | Completion time, throughput and wasted work of the newest run (`RUN=output/runs/<run>.jsonl` for another); see [Run logs and metrics](#run-logs-and-metrics) |
+| `make save-run` | Copy the newest run log (or `RUN=...`) into `docs/runs/`, with its metrics next to it |
 | `make sweep` | Simulate the ant scheduler over a grid of alpha, beta and evaporation (about 11 minutes on 10 cores); see [docs/parameter-sweep.md](docs/parameter-sweep.md) |
 | `make test` | Unit and science tests (everything that doesn't need Docker) |
 | `make test-unit` | Fast tests only: coordinator, replication, worker, submit, scenarios, run logs, pheromone table, package |
@@ -49,7 +52,7 @@ Tests come in three types, selected with pytest markers:
 
 | Type | Command | Covers | Needs |
 |---|---|---|---|
-| Unit | `make test-unit` | Coordinator endpoints (against [fakeredis](https://github.com/cunla/fakeredis-py)), the worker loop, the submit script, failure scenarios (against a fake Docker and clock), the pheromone table, replication and result checks (including a worker that returns garbage), two in-process workers processing 50 stars, package | Nothing; takes seconds |
+| Unit | `make test-unit` | Coordinator endpoints (against [fakeredis](https://github.com/cunla/fakeredis-py)), the worker loop, the submit script, failure scenarios (against a fake Docker and clock), the pheromone table, replication and result checks (including a worker that returns garbage), machine details and the per-worker report, two in-process workers processing 50 stars, package | Nothing; takes seconds |
 | Science | `make test-science` | Pipeline: flatten, BLS, plotting, `run_task`, download retries and exit codes, using a synthetic light curve and faked MAST errors | The `science` extra (skipped without it); no network |
 | Integration | `make test-integration` | The real cluster over HTTP: real Redis, the worker containers processing 50 tasks, a full task round trip, a garbage result outvoted and its worker flagged, a silent worker going offline and its task finished by another, a failure scenario slowing, killing and restarting a worker on schedule | Docker |
 
@@ -100,7 +103,7 @@ Each star runs on two workers and is accepted once their results match (see [Rep
 3. Run the task: by default `pipeline.run_task`, the transit search on that star's first SPOC 2-minute light curve. A task that raises (say the star has no light curve on MAST) is reported with an `{"error", "message"}` result instead.
 4. Report the result, retrying network errors. If the coordinator answers 409, the worker was marked offline and the task went to someone else, so the result is dropped.
 
-If the coordinator forgets the worker or marks it offline, the worker registers again. On SIGTERM it finishes and reports the task it's running before it exits (compose gives it three minutes).
+When it registers, the worker sends a short description of its machine: OS, CPU, core count, memory, and its Python, numpy, astropy and lightkurve versions. If the coordinator can't be reached at startup, it keeps trying. If the coordinator forgets the worker or marks it offline, the worker registers again. On SIGTERM it finishes and reports the task it's running before it exits (compose gives it three minutes).
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -110,7 +113,7 @@ If the coordinator forgets the worker or marks it offline, the worker registers 
 | `SIMULATED_TASK_SECONDS` | `1` | How long a simulated task takes |
 | `POLL_INTERVAL` | `2` | Seconds between task requests while the queue is empty |
 
-To run a worker outside Docker against a cluster started with `make up`: `WORKER_ID=laptop python -m antsearch.worker`.
+To run a worker outside Docker against a cluster started with `make up`: `make worker COORDINATOR_URL=http://localhost:8000 WORKER_ID=laptop`.
 
 A transit-search result looks like this (TOI-102, known period 4.4119 d):
 
@@ -118,6 +121,41 @@ A transit-search result looks like this (TOI-102, known period 4.4119 d):
 {"star_id": "TOI-102", "sector": 1, "period": 4.41305, "t0": 1326.0756, "duration": 0.12,
  "depth": 0.0131, "power": 0.283, "download_seconds": 43.96, "compute_seconds": 6.31}
 ```
+
+## Running across several machines
+
+To run one cluster across several computers, one machine runs the coordinator and every machine runs a worker. All of them need to be on the same network.
+
+On the coordinator machine:
+
+```bash
+make coordinator        # Redis and the coordinator, no local workers
+```
+
+It prints the address to use, e.g. `http://192.168.1.20:8000`. Then on every machine, including the coordinator's own, clone the repo, run the [setup](#setup), and start a worker with a name no other machine uses:
+
+```bash
+make worker COORDINATOR_URL=http://192.168.1.20:8000 WORKER_ID=daniel-laptop
+```
+
+On Windows without `make`, in PowerShell with the venv active: `$env:COORDINATOR_URL="http://192.168.1.20:8000"; $env:WORKER_ID="spare-pc"; python -m antsearch.worker`.
+
+A machine without Python can run the Docker image instead. The worker then reports the Docker VM rather than the real hardware:
+
+```bash
+make build
+docker run --rm --stop-timeout 180 -e COORDINATOR_URL=http://192.168.1.20:8000 -e WORKER_ID=spare-pc antsearch:dev
+```
+
+`curl http://192.168.1.20:8000/workers` shows who has joined and what each machine is. Once everyone is in, queue the stars from the coordinator machine with `make submit`. When the run is finished, `make save-run` copies the run log into `docs/runs/` with its metrics next to it. The metrics end with one line per worker: its runs, failures, outvoted results, lost runs, mean time per answer, and the machine it ran on.
+
+Things that can go wrong:
+
+- Campus and guest Wi-Fi often block traffic between devices, so the workers can't reach the coordinator. A phone hotspot or [Tailscale](https://tailscale.com) gets around that. On macOS, allow incoming connections for Docker if the firewall asks.
+- Two machines with the same `WORKER_ID` would share one worker's tasks. The coordinator logs a warning if an ID registers from a second host while it's still online.
+- A laptop that goes to sleep is marked offline and its task goes to another worker, as with any crash. Keep the coordinator machine plugged in and awake; on macOS, leave `caffeinate -i` running in a terminal during the run.
+- Different numpy or astropy versions can change a transit search's result slightly, so honest machines can outvote each other. The versions are in the run log's `worker_registered` lines.
+- There's no authentication. Only run the coordinator on a network you trust, and don't forward its port to the internet.
 
 ## Failure scenarios
 
@@ -170,7 +208,8 @@ The coordinator writes one JSON line per event, with `time` in Unix seconds on i
 | `event` | Other fields |
 |---|---|
 | `coordinator_started` | `scheduler`, `seed`, `heartbeat_timeout`, `replicas`, and `alpha`, `beta`, `evaporation` and `late_factor` for the ant scheduler |
-| `worker_registered`, `worker_online` | `worker_id` |
+| `worker_registered` | `worker_id`, and `machine` (what the worker runs on) if the worker sent it |
+| `worker_online` | `worker_id` |
 | `worker_offline` | `worker_id`, `last_heartbeat` |
 | `task_queued` | `task_id`, `star_id` |
 | `task_assigned` | `task_id`, `star_id`, `worker_id`; one for each run of a task |
@@ -186,6 +225,7 @@ The metrics:
 - **Completion time:** from the first task queued to the last task settled. `make metrics` also shows the mean turnaround, the same measure for each task on its own. With a full queue the schedulers have about the same choices, so to compare them, queue tasks gradually and look at turnaround.
 - **Throughput:** tasks that succeeded per minute of completion time. Failed runs don't count, so a worker that fails quickly can't look fast.
 - **Wasted work:** worker time that produced no answer, measured from assignment. For a task taken from a worker, that's up to the worker's last heartbeat, or up to its result if it turns out to be alive and reports late. For a failed run, it's up to the error result, and for an outvoted run, up to its result. It's shown as seconds and as a share of all worker time, with lost, failed and outvoted work listed separately. Worker time counts every run, so with replication it's at least twice the useful work; tasks are counted once each. `make metrics` also shows how many extra runs mismatches caused.
+- **Per worker:** runs, failed runs, outvoted runs, lost runs, mean time per answer, and the worker's machine.
 
 Times are spans on the coordinator's clock rather than what workers report, so they work for failed runs and don't depend on the workers' clocks. They include time on the network.
 
@@ -197,9 +237,9 @@ Workers and tasks are stored in Redis under `antsearch:` keys (the layout is des
 
 | Endpoint | Body | Response |
 |---|---|---|
-| `POST /workers/register` | `{"worker_id": "w1"}` | `{"worker_id", "registered": true, "heartbeat_timeout"}` |
+| `POST /workers/register` | `{"worker_id": "w1"}`, optionally with `"machine": {...}`, flat key/value pairs describing the machine | `{"worker_id", "registered": true, "heartbeat_timeout"}` |
 | `POST /workers/{id}/heartbeat` | none | `{"worker_id", "status": "online"}`; 404 if not registered |
-| `GET /workers` | none | Every worker with its status, last heartbeat, assigned tasks, how many of its results were outvoted (`disputed`) and whether it's `flagged` |
+| `GET /workers` | none | Every worker with its status, last heartbeat, assigned tasks, how many of its results were outvoted (`disputed`) whether it's `flagged`, and its `machine` |
 | `POST /tasks` | `{"star_ids": ["WASP-18", ...]}`, optionally with `"num_sectors": [2, ...]`, one per star, to set each task's type | 201, `{"task_ids": ["t1", ...]}`; 422 if `num_sectors` doesn't match `star_ids` |
 | `POST /tasks/request` | `{"worker_id": "w1"}` | `{"task_id", "star_id"}`; 204 if no task is available for this worker; 404 if not registered; 409 if offline |
 | `POST /tasks/{id}/result` | `{"worker_id": "w1", "result": {...}}` | `{"task_id", "status"}`: `done` once enough results match, `assigned` or `pending` while it waits for more; 409 if the task isn't assigned to that worker |
@@ -343,7 +383,7 @@ AntSearch/
 │   ├── validation.py   # comparing results from different workers, and settling a task
 │   ├── worker.py       # worker: registers, heartbeats, pulls tasks, runs them, reports results
 │   └── datasets/       # TESS star list (tess_data_mixed.csv) and the script that rebuilt it
-├── docs/               # parameter sweep write-up and results, references
+├── docs/               # parameter sweep write-up and results, references, saved run logs (runs/)
 ├── scenarios/          # example failure scenarios for antsearch.scenario
 ├── tests/              # pytest tests; test_integration.py needs a running cluster
 ├── Makefile            # build, run, test and coverage shortcuts (`make help`)

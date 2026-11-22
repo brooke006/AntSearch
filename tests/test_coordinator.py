@@ -107,8 +107,8 @@ def test_list_workers_shows_status_and_tasks(client, clock):
 
     assert client.get("/workers").json() == {
         "workers": [
-            {"worker_id": "w1", "status": "online", "last_heartbeat": clock.now, "tasks": [], "disputed": 0, "flagged": False},
-            {"worker_id": "w2", "status": "online", "last_heartbeat": clock.now, "tasks": [task_id], "disputed": 0, "flagged": False},
+            {"worker_id": "w1", "status": "online", "last_heartbeat": clock.now, "tasks": [], "disputed": 0, "flagged": False, "machine": None},
+            {"worker_id": "w2", "status": "online", "last_heartbeat": clock.now, "tasks": [task_id], "disputed": 0, "flagged": False, "machine": None},
         ]
     }
 

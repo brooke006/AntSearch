@@ -18,7 +18,7 @@ IT_COMPOSE := ANTSEARCH_PORT=$(IT_PORT) RUN_LOG_DIR=$(IT_RUNS) HEARTBEAT_TIMEOUT
 	POLL_INTERVAL=0.5 $(COMPOSE) -p antsearch-it
 
 .DEFAULT_GOAL := help
-.PHONY: help install build up down logs ps submit scenario metrics sweep test test-unit test-science test-integration test-all coverage clean
+.PHONY: help install build up coordinator worker down logs ps submit scenario metrics save-run sweep test test-unit test-science test-integration test-all coverage clean
 
 help: ## Show this list
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  %-18s %s\n", $$1, $$2}'
@@ -33,7 +33,18 @@ up: ## Start redis, the coordinator and three workers in the background on http:
 	mkdir -p $${RUN_LOG_DIR:-output/runs}
 	$(COMPOSE) up --build -d --wait
 
-down: ## Stop the stack started by `make up`
+coordinator: ## Start only redis and the coordinator, for workers on other machines to join
+	mkdir -p $${RUN_LOG_DIR:-output/runs}
+	$(COMPOSE) up --build -d --wait redis coordinator
+	@echo "Workers on other machines join with:"
+	@echo "  make worker COORDINATOR_URL=http://$$(ipconfig getifaddr en0 2>/dev/null || hostname -I | cut -d' ' -f1):$${ANTSEARCH_PORT:-8000} WORKER_ID=<name>"
+
+worker: ## Run a worker here: make worker COORDINATOR_URL=http://<address>:8000 WORKER_ID=<name>
+	@test -n "$(COORDINATOR_URL)" && test -n "$(WORKER_ID)" || \
+		{ echo "usage: make worker COORDINATOR_URL=http://<address>:8000 WORKER_ID=<a name no other machine uses>"; exit 2; }
+	COORDINATOR_URL=$(COORDINATOR_URL) WORKER_ID=$(WORKER_ID) $(PYTHON) -m antsearch.worker
+
+down: ## Stop the stack started by `make up` or `make coordinator`
 	$(COMPOSE) down
 
 logs: ## Follow the stack's logs
@@ -51,6 +62,9 @@ scenario: ## Run a failure scenario on the stack, e.g. SCENARIO=scenarios/slow-w
 
 metrics: ## Completion time, throughput and wasted work of the newest run, or of RUN=output/runs/<run>.jsonl
 	$(PYTHON) -m antsearch.metrics $(RUN)
+
+save-run: ## Copy the newest run log (or RUN=...) and its metrics into docs/runs/
+	$(PYTHON) -m antsearch.metrics --save docs/runs $(RUN)
 
 sweep: ## Simulate the ant scheduler over a grid of alpha, beta and evaporation; writes docs/parameter-sweep-*
 	$(PYTHON) -m antsearch.sweep

@@ -3,7 +3,8 @@
 Redis keys:
     antsearch:workers               set of every worker ID that has registered
     antsearch:worker:<id>           hash: status (online/offline), registered_at, last_heartbeat,
-                                    disputed (how many of its results were outvoted)
+                                    disputed (how many of its results were outvoted), machine
+                                    (JSON, what the worker said it runs on)
     antsearch:worker:<id>:tasks     set of task IDs currently assigned to that worker
     antsearch:worker:<id>:history   set of task IDs that worker has reported a result for
     antsearch:tasks:pending         list of task IDs waiting for a worker, next one first; a task
@@ -97,6 +98,8 @@ def task_status(redis_client: redis.Redis, task: dict[str, str], task_id: str) -
 
 class Registration(BaseModel):
     worker_id: str
+    # What the worker runs on (OS, CPU, library versions...), as flat key/value pairs.
+    machine: dict[str, str | int | float | bool | None] | None = None
 
 
 class TaskRequest(BaseModel):
@@ -232,16 +235,26 @@ def create_app(
     @app.post("/workers/register")
     def register(registration: Registration):
         worker_id = registration.worker_id
+        old = redis_client.hgetall(worker_key(worker_id))
+        old_host = json.loads(old["machine"]).get("hostname") if "machine" in old else None
+        new_host = (registration.machine or {}).get("hostname")
+        if old.get("status") == "online" and old_host and new_host and old_host != new_host:
+            log.warning("worker %s registered from %s while still online from %s; give each machine its own WORKER_ID",
+                        worker_id, new_host, old_host)
         # A worker that restarts loses whatever it was running, so hand those tasks to someone else.
-        last_heartbeat = redis_client.hget(worker_key(worker_id), "last_heartbeat")
+        last_heartbeat = old.get("last_heartbeat")
         task_ids = requeue_tasks(redis_client, worker_id)
         record_requeued(run_log, task_ids, worker_id, "reregistered", float(last_heartbeat or 0))
         now = clock()
+        fields = {"status": "online", "registered_at": now, "last_heartbeat": now}
+        if registration.machine is not None:
+            fields["machine"] = json.dumps(registration.machine)
         redis_client.sadd(WORKERS_KEY, worker_id)
-        redis_client.hset(
-            worker_key(worker_id), mapping={"status": "online", "registered_at": now, "last_heartbeat": now}
-        )
-        run_log.record("worker_registered", worker_id=worker_id)
+        redis_client.hset(worker_key(worker_id), mapping=fields)
+        if registration.machine is None:
+            run_log.record("worker_registered", worker_id=worker_id)
+        else:
+            run_log.record("worker_registered", worker_id=worker_id, machine=registration.machine)
         log.info("registered worker %s", worker_id)
         return {"worker_id": worker_id, "registered": True, "heartbeat_timeout": heartbeat_timeout}
 
@@ -269,6 +282,7 @@ def create_app(
                     "tasks": sorted(redis_client.smembers(worker_tasks_key(worker_id))),
                     "disputed": disputed,
                     "flagged": disputed > 0,
+                    "machine": json.loads(worker["machine"]) if "machine" in worker else None,
                 }
             )
         return {"workers": workers}

@@ -4,7 +4,7 @@ Every line has a time (Unix seconds on the coordinator's clock) and an event, pl
 
     coordinator_started   scheduler, seed, heartbeat_timeout, replicas (plus alpha, beta, evaporation,
                           late_factor for the ant scheduler)
-    worker_registered     worker_id
+    worker_registered     worker_id, and machine if the worker sent one (OS, CPU, library versions)
     worker_offline        worker_id, last_heartbeat
     worker_online         worker_id
     task_queued           task_id, star_id
