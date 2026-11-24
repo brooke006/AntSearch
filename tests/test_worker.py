@@ -13,6 +13,7 @@ from antsearch.coordinator import create_app
 from antsearch.worker import (
     execute,
     load_task,
+    machine_info,
     register,
     report_result,
     request_task,
@@ -34,7 +35,7 @@ def test_register_posts_worker_id_and_logs(caplog):
         register(client, "w1")
 
     assert [r.url.path for r in requests] == ["/workers/register"]
-    assert json.loads(requests[0].content) == {"worker_id": "w1"}
+    assert json.loads(requests[0].content) == {"worker_id": "w1", "machine": machine_info()}
     assert "worker w1 registered" in caplog.text
 
 

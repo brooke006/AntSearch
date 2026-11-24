@@ -9,6 +9,10 @@ STARS   ?= 50
 SCENARIO ?=
 RUN     ?=
 
+# This machine's address on the local network, which workers on other machines connect to.
+HOST_IP  = $(shell ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | cut -d' ' -f1)
+MACHINES := $(COMPOSE) -p antsearch-machines -f compose.machines.yaml
+
 # Integration tests get their own compose project, port and a short heartbeat timeout,
 # so they never touch a dev stack started with `make up`. Their workers run simulated tasks
 # instead of downloading from MAST.
@@ -18,7 +22,7 @@ IT_COMPOSE := ANTSEARCH_PORT=$(IT_PORT) RUN_LOG_DIR=$(IT_RUNS) HEARTBEAT_TIMEOUT
 	POLL_INTERVAL=0.5 $(COMPOSE) -p antsearch-it
 
 .DEFAULT_GOAL := help
-.PHONY: help install build up down logs ps submit scenario metrics sweep test test-unit test-science test-integration test-all coverage clean
+.PHONY: help install build up coordinator worker machines down logs ps submit scenario metrics save-run sweep test test-unit test-science test-integration test-all coverage clean
 
 help: ## Show this list
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  %-18s %s\n", $$1, $$2}'
@@ -33,7 +37,24 @@ up: ## Start redis, the coordinator and three workers in the background on http:
 	mkdir -p $${RUN_LOG_DIR:-output/runs}
 	$(COMPOSE) up --build -d --wait
 
-down: ## Stop the stack started by `make up`
+coordinator: ## Start only redis and the coordinator, for workers on other machines to join
+	mkdir -p $${RUN_LOG_DIR:-output/runs}
+	$(COMPOSE) up --build -d --wait redis coordinator
+	@echo "Workers on other machines join with:"
+	@echo "  make worker COORDINATOR_URL=http://$(HOST_IP):$${ANTSEARCH_PORT:-8000} WORKER_ID=<name>"
+	@ip=$$(tailscale ip -4 2>/dev/null | head -1); test -z "$$ip" || \
+		echo "or, from machines on your Tailscale network, COORDINATOR_URL=http://$$ip:$${ANTSEARCH_PORT:-8000}"
+
+worker: ## Run a worker here: make worker COORDINATOR_URL=http://<address>:8000 WORKER_ID=<name>
+	@test -n "$(COORDINATOR_URL)" && test -n "$(WORKER_ID)" || \
+		{ echo "usage: make worker COORDINATOR_URL=http://<address>:8000 WORKER_ID=<a name no other machine uses>"; exit 2; }
+	COORDINATOR_URL=$(COORDINATOR_URL) WORKER_ID=$(WORKER_ID) $(PYTHON) -m antsearch.worker
+
+machines: ## Start four worker containers with different CPU and memory limits that join `make coordinator`
+	COORDINATOR_URL=$${COORDINATOR_URL:-http://$(HOST_IP):$${ANTSEARCH_PORT:-8000}} $(MACHINES) up --build -d
+
+down: ## Stop the stack started by `make up` or `make coordinator`, and any `make machines` workers
+	$(MACHINES) down
 	$(COMPOSE) down
 
 logs: ## Follow the stack's logs
@@ -51,6 +72,9 @@ scenario: ## Run a failure scenario on the stack, e.g. SCENARIO=scenarios/slow-w
 
 metrics: ## Completion time, throughput and wasted work of the newest run, or of RUN=output/runs/<run>.jsonl
 	$(PYTHON) -m antsearch.metrics $(RUN)
+
+save-run: ## Copy the newest run log (or RUN=...) and its metrics into docs/runs/
+	$(PYTHON) -m antsearch.metrics --save docs/runs $(RUN)
 
 sweep: ## Simulate the ant scheduler over a grid of alpha, beta and evaporation; writes docs/parameter-sweep-*
 	$(PYTHON) -m antsearch.sweep

@@ -1,0 +1,58 @@
+# Worker containers sized like four different computers, for rehearsing a multi-machine run on one host.
+# They join a coordinator started with `make coordinator` through its network address, like other
+# machines would. Start them with `make machines`. Their names start with your user name, so
+# teammates can run them against the same coordinator. With WORKER_TASK=simulated each one takes a
+# different time per star, since a real transit search mostly waits on downloads and barely notices
+# the CPU limit.
+
+x-machine: &machine
+  build: .
+  image: ${IMAGE:-antsearch:dev}
+  command: ["python", "-m", "antsearch.worker"]
+  stop_grace_period: 3m
+
+x-env: &env
+  COORDINATOR_URL: ${COORDINATOR_URL:-http://host.docker.internal:8000}
+  WORKER_TASK: ${WORKER_TASK:-transit}
+  POLL_INTERVAL: ${POLL_INTERVAL:-2}
+
+services:
+  desktop:
+    <<: *machine
+    hostname: ${USER:-local}-desktop
+    cpus: 4
+    mem_limit: 4g
+    environment:
+      <<: *env
+      WORKER_ID: ${USER:-local}-desktop
+      SIMULATED_TASK_SECONDS: 0.5
+
+  laptop:
+    <<: *machine
+    hostname: ${USER:-local}-laptop
+    cpus: 2
+    mem_limit: 2g
+    environment:
+      <<: *env
+      WORKER_ID: ${USER:-local}-laptop
+      SIMULATED_TASK_SECONDS: 1
+
+  old-laptop:
+    <<: *machine
+    hostname: ${USER:-local}-old-laptop
+    cpus: 1
+    mem_limit: 1.5g
+    environment:
+      <<: *env
+      WORKER_ID: ${USER:-local}-old-laptop
+      SIMULATED_TASK_SECONDS: 2
+
+  netbook:
+    <<: *machine
+    hostname: ${USER:-local}-netbook
+    cpus: 0.5
+    mem_limit: 1g
+    environment:
+      <<: *env
+      WORKER_ID: ${USER:-local}-netbook
+      SIMULATED_TASK_SECONDS: 4

@@ -1,6 +1,7 @@
 """Worker: registers with the coordinator, then pulls tasks, runs them and reports the results until stopped.
 
-Heartbeats go out from a background thread, so the worker stays online through long tasks.
+Heartbeats go out from a background thread, so the worker stays online through long tasks. It
+registers with a description of its machine (see machine_info), which goes in the run log.
 
 Environment:
     COORDINATOR_URL         coordinator to join (default http://localhost:8000)
@@ -12,13 +13,17 @@ Environment:
 """
 
 import functools
+import importlib.metadata
 import logging
 import os
+import platform
 import signal
 import socket
+import subprocess
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -32,12 +37,87 @@ DEFAULT_POLL_INTERVAL = 2.0  # seconds
 Task = Callable[[str], dict[str, Any]]
 
 
+def cpu_model() -> str | None:
+    """The CPU's marketing name, e.g. "Apple M2" or "Intel(R) Core(TM) i7-8550U", if it can be found."""
+    try:
+        if platform.system() == "Darwin":
+            out = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True, timeout=2)
+            return out.stdout.strip() or None
+        if platform.system() == "Linux":
+            for line in Path("/proc/cpuinfo").read_text().splitlines():
+                if line.startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+            return None
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return platform.processor() or None
+
+
+def memory_gb() -> float | None:
+    try:
+        return round(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2**30, 1)
+    except (AttributeError, ValueError, OSError):
+        return None
+
+
+def container_limits(cgroup: Path = Path("/sys/fs/cgroup")) -> tuple[float | None, float | None]:
+    """The CPUs and GB of memory a container is limited to (docker run --cpus, --memory), or None for no limit."""
+    cpus = memory = None
+    try:
+        quota, period = (cgroup / "cpu.max").read_text().split()
+        if quota != "max":
+            cpus = round(int(quota) / int(period), 2)
+    except (OSError, ValueError):
+        pass
+    try:
+        limit = (cgroup / "memory.max").read_text().strip()
+        if limit != "max":
+            memory = round(int(limit) / 2**30, 1)
+    except (OSError, ValueError):
+        pass
+    return cpus, memory
+
+
+@functools.cache
+def machine_info() -> dict[str, Any]:
+    """What this worker runs on: hardware (a container's limits if it has them), OS and science library versions."""
+    cpus, memory = os.cpu_count(), memory_gb()
+    cpu_limit, memory_limit = container_limits()
+    info = {
+        "hostname": socket.gethostname(),
+        "os": f"{platform.system()} {platform.release()}",
+        "arch": platform.machine(),
+        "cpu": cpu_model(),
+        "cpus": min(cpus, cpu_limit) if cpus and cpu_limit else cpus,
+        "memory_gb": min(memory, memory_limit) if memory and memory_limit else memory,
+        "docker": os.path.exists("/.dockerenv"),
+        "python": platform.python_version(),
+    }
+    for package in ("numpy", "astropy", "lightkurve"):
+        try:
+            info[package] = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            info[package] = None
+    return info
+
+
 def register(client: httpx.Client, worker_id: str) -> float:
     """Register with the coordinator and return its heartbeat timeout in seconds."""
-    response = client.post("/workers/register", json={"worker_id": worker_id})
+    response = client.post("/workers/register", json={"worker_id": worker_id, "machine": machine_info()})
     response.raise_for_status()
     log.info("worker %s registered with coordinator at %s", worker_id, client.base_url)
     return float(response.json().get("heartbeat_timeout", DEFAULT_HEARTBEAT_TIMEOUT))
+
+
+def connect(client: httpx.Client, worker_id: str, stop: threading.Event, retry_interval: float) -> float | None:
+    """Register, retrying until the coordinator answers. Returns its heartbeat timeout, or None if stopped."""
+    while True:
+        try:
+            return register(client, worker_id)
+        except httpx.HTTPError as exc:
+            log.warning("can't register with coordinator at %s (%s); retrying", client.base_url, exc)
+        if stop.wait(retry_interval):
+            return None
 
 
 def send_heartbeats(client: httpx.Client, worker_id: str, interval: float, stop: threading.Event) -> None:
@@ -159,7 +239,9 @@ def main() -> None:
         signal.signal(sig, lambda *_: stop.set())
 
     with httpx.Client(base_url=coordinator_url, timeout=5.0) as client:
-        timeout = register(client, worker_id)
+        timeout = connect(client, worker_id, stop, poll_interval)
+        if timeout is None:
+            return
         heartbeats = threading.Thread(
             target=send_heartbeats, args=(client, worker_id, timeout / 3, stop), name="heartbeats", daemon=True
         )
