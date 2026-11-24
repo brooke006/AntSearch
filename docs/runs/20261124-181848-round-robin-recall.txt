@@ -1,0 +1,113 @@
+output/runs/20261124-181848-round-robin.jsonl
+stars:      200 of 200 listed have a result (11 failed, 0 unresolved)
+recall:     82 of 100 known planets recovered (82.0%), period within 1%
+            82 of 89 with a known period of 0.5 to 15 d, the range searched (92.1%)
+            2 more found at 2 or 3 times the period or a fraction of it, 16 at another period
+unvetted:   85 of 89 stars with no known planet have a signal with SNR >= 7.1
+
+unvetted signals (no known planet):
+  TOI-1000   found   2.17062 d     644 ppm  SNR   19.9  the signal that was ruled a false positive
+  TOI-1002   found   1.86808 d    1514 ppm  SNR   47.6  the signal that was ruled a false positive
+  TOI-1003   found   2.74494 d     446 ppm  SNR   15.5  the signal that was ruled a false positive
+  TOI-1004   found   3.57358 d     510 ppm  SNR   18.9  the signal that was ruled a false positive
+  TOI-1005   found   4.54971 d    3311 ppm  SNR   83.6  the signal that was ruled a false positive
+  TOI-1006   found   2.50490 d    1988 ppm  SNR   54.3  the signal that was ruled a false positive
+  TOI-1008   found   2.04908 d     330 ppm  SNR   18.8  the signal that was ruled a false positive
+  TOI-1010   found   0.68078 d    1250 ppm  SNR   72.2  the signal that was ruled a false positive
+  TOI-1013   found   5.42480 d   10075 ppm  SNR   95.8  the signal that was ruled a false positive
+  TOI-1014   found   1.40898 d    2735 ppm  SNR  113.9  the signal that was ruled a false positive
+  TOI-1015   found   1.37444 d    1146 ppm  SNR   20.2  the signal that was ruled a false positive
+  TOI-1016   found  11.29230 d    2525 ppm  SNR   25.3  a new signal
+  TOI-1017   found   1.10367 d    2464 ppm  SNR   52.2  the signal that was ruled a false positive
+  TOI-1018   found   4.95796 d    5699 ppm  SNR   57.8  the signal that was ruled a false positive
+  TOI-1020   found   3.28841 d    1815 ppm  SNR   24.7  the signal that was ruled a false positive
+  TOI-1021   found  12.48149 d     883 ppm  SNR   11.8  a new signal
+  TOI-1022   found   6.37363 d     944 ppm  SNR   29.2  a new signal
+  TOI-1023   found   1.32384 d    2681 ppm  SNR   99.6  the signal that was ruled a false positive
+  TOI-1024   found  13.72024 d    1149 ppm  SNR   15.0  a new signal
+  TOI-1025   found   9.68405 d    3691 ppm  SNR  178.5  the signal that was ruled a false positive
+  TOI-1026   found  14.28416 d     927 ppm  SNR   17.5  the signal that was ruled a false positive
+  TOI-1028   found   1.13337 d    1079 ppm  SNR   58.4  a new signal
+  TOI-1030   found   0.79481 d    2022 ppm  SNR   64.7  a new signal
+  TOI-1031   found   5.64920 d    1143 ppm  SNR   20.8  the signal that was ruled a false positive
+  TOI-1037   found   1.20482 d     515 ppm  SNR   30.4  the signal that was ruled a false positive
+  TOI-1038   found   3.22890 d     480 ppm  SNR   15.2  the signal that was ruled a false positive
+  TOI-1040   found  13.56471 d     631 ppm  SNR   19.0  a new signal
+  TOI-1041   found   8.30701 d    6427 ppm  SNR  170.9  the signal that was ruled a false positive
+  TOI-1042   found  12.93524 d    3878 ppm  SNR   41.1  a new signal
+  TOI-1043   found   1.44006 d     381 ppm  SNR   14.7  the signal that was ruled a false positive
+  TOI-1045   found   3.70479 d    5303 ppm  SNR  103.6  the signal that was ruled a false positive
+  TOI-1046   found   1.54746 d     485 ppm  SNR   19.1  a new signal
+  TOI-1047   found   0.62612 d    1200 ppm  SNR   25.9  the signal that was ruled a false positive
+  TOI-1048   found   0.60790 d    1028 ppm  SNR   34.5  the signal that was ruled a false positive
+  TOI-1053   found   5.74243 d     886 ppm  SNR   26.5  the signal that was ruled a false positive
+  TOI-1058   found  11.13237 d     853 ppm  SNR   19.9  the signal that was ruled a false positive
+  TOI-1061   found   0.54089 d     358 ppm  SNR   15.9  the signal that was ruled a false positive
+  TOI-1070   found   2.97779 d   10276 ppm  SNR  198.5  the signal that was ruled a false positive
+  TOI-1072   found  12.78585 d    9412 ppm  SNR   56.5  the signal that was ruled a false positive
+  TOI-1087   found   9.30230 d    1511 ppm  SNR   25.5  the signal that was ruled a false positive
+  TOI-1088   found   1.65479 d     784 ppm  SNR   14.7  a new signal
+  TOI-1089   found  13.65401 d    1644 ppm  SNR    9.6  a new signal
+  TOI-1092   found   1.19213 d    2849 ppm  SNR  150.9  the signal that was ruled a false positive
+  TOI-1093   found   0.74866 d     770 ppm  SNR   34.1  a new signal
+  TOI-1096   found  13.34617 d     468 ppm  SNR    8.0  a new signal
+  TOI-1101   found   2.66915 d    3079 ppm  SNR   40.6  the signal that was ruled a false positive
+  TOI-1104   found  12.95353 d    3932 ppm  SNR  164.6  a new signal
+  TOI-1108   found   7.14377 d   10731 ppm  SNR   57.7  the signal that was ruled a false positive
+  TOI-1109   found   7.04311 d    1036 ppm  SNR   17.4  the signal that was ruled a false positive
+  TOI-1110   found   2.45456 d    3828 ppm  SNR   91.0  the signal that was ruled a false positive
+  TOI-1111   found  11.47678 d    6623 ppm  SNR   78.8  the signal that was ruled a false positive
+  TOI-1112   found   2.77921 d     524 ppm  SNR   14.0  the signal that was ruled a false positive
+  TOI-1120   found   1.66231 d    5464 ppm  SNR   73.0  the signal that was ruled a false positive
+  TOI-1127   found   2.32440 d    2206 ppm  SNR  229.0  the signal that was ruled a false positive
+  TOI-1128   found  13.54824 d    1214 ppm  SNR   10.5  the signal that was ruled a false positive
+  TOI-1132   found   1.54950 d     386 ppm  SNR   15.8  the signal that was ruled a false positive
+  TOI-1133   found   1.81172 d     415 ppm  SNR   19.7  the signal that was ruled a false positive
+  TOI-1134   found   8.12354 d   10358 ppm  SNR  207.9  a new signal
+  TOI-1138   found   0.65007 d     682 ppm  SNR   35.8  the signal that was ruled a false positive
+  TOI-1140   found   6.87086 d    4574 ppm  SNR   70.1  the signal that was ruled a false positive
+  TOI-1141   found   8.47628 d    6544 ppm  SNR  237.5  the signal that was ruled a false positive
+  TOI-1142   found   3.36828 d    3065 ppm  SNR   98.1  the signal that was ruled a false positive
+  TOI-1143   found  11.20844 d    2597 ppm  SNR   65.2  the signal that was ruled a false positive
+  TOI-1145   found   0.72536 d    5638 ppm  SNR   79.3  a new signal
+  TOI-1146   found   0.89864 d    2198 ppm  SNR   77.4  a new signal
+  TOI-1147   found  10.92632 d    3734 ppm  SNR   89.0  the signal that was ruled a false positive
+  TOI-1152   found   6.50715 d    3546 ppm  SNR  191.3  the signal that was ruled a false positive
+  TOI-1155   found  13.18117 d    6978 ppm  SNR   22.4  a new signal
+  TOI-1156   found   1.68628 d    3448 ppm  SNR   58.5  the signal that was ruled a false positive
+  TOI-1157   found  13.07023 d    3120 ppm  SNR   38.4  the signal that was ruled a false positive
+  TOI-1158   found   2.92622 d    4665 ppm  SNR  111.4  the signal that was ruled a false positive
+  TOI-1159   found   0.73766 d     549 ppm  SNR   17.3  the signal that was ruled a false positive
+  TOI-1160   found   2.36819 d    2880 ppm  SNR   28.6  the signal that was ruled a false positive
+  TOI-1166   found   1.88196 d     883 ppm  SNR   25.6  the signal that was ruled a false positive
+  TOI-1167   found   9.80434 d    1184 ppm  SNR   10.5  a new signal
+  TOI-1168   found   2.13567 d    9283 ppm  SNR  114.5  the signal that was ruled a false positive
+  TOI-1170   found   0.64581 d     461 ppm  SNR   22.0  a new signal
+  TOI-1171   found  11.19221 d    3110 ppm  SNR   21.5  the signal that was ruled a false positive
+  TOI-1172   found   7.85056 d   17012 ppm  SNR  100.6  the signal that was ruled a false positive
+  TOI-1175   found   7.50431 d    1137 ppm  SNR   16.1  the signal that was ruled a false positive
+  TOI-1186   found  11.23783 d    8582 ppm  SNR  153.9  the signal that was ruled a false positive
+  TOI-1188   found   8.51529 d    3642 ppm  SNR   26.5  the signal that was ruled a false positive
+  TOI-1191   found  12.06903 d    2654 ppm  SNR   20.8  a new signal
+  TOI-1193   found   2.22248 d    3427 ppm  SNR   38.6  the signal that was ruled a false positive
+  TOI-1195   found   4.05162 d     664 ppm  SNR   11.4  the signal that was ruled a false positive
+
+known planets not recovered:
+  TOI-1049   known   2.18053 d  found  12.81111 d  SNR   64.4  missed
+  TOI-1054   known  15.50779 d  found   7.74765 d  SNR   13.7  harmonic
+  TOI-1055   known  17.47131 d  found   8.73386 d  SNR   34.3  harmonic
+  TOI-1064   known   6.44387 d  found  12.22445 d  SNR   11.1  missed
+  TOI-1066   known   4.60618 d  found   0.63345 d  SNR   78.8  missed
+  TOI-1098   known  10.18270 d  found   2.35696 d  SNR   62.3  missed
+  TOI-1136   known  12.51873 d  found  14.24244 d  SNR   33.0  missed
+  TOI-1154   known  21.74554 d  found  13.85930 d  SNR   37.8  missed
+  TOI-1203   known  25.51953 d  found  11.83123 d  SNR   14.5  missed
+  TOI-1221   known  91.68278 d  found   1.74935 d  SNR    5.7  missed
+  TOI-1224   known   4.17827 d  found   1.22811 d  SNR   55.7  missed
+  TOI-1227   known  27.36138 d  found   6.98383 d  SNR   11.1  missed
+  TOI-1228   known  29.04968 d  found   0.59883 d  SNR    5.1  missed
+  TOI-1230   known  25.05735 d  found   9.54879 d  SNR    9.7  missed
+  TOI-1231   known  24.24550 d  found  14.41945 d  SNR   28.3  missed
+  TOI-1232   known  14.25456 d  found   1.37580 d  SNR   62.4  missed
+  TOI-1246   known  18.65548 d  found  12.67104 d  SNR    9.8  missed
+  TOI-1262   known  20.87744 d  found  12.29186 d  SNR    8.2  missed
