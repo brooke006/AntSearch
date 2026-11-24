@@ -60,16 +60,36 @@ def memory_gb() -> float | None:
         return None
 
 
+def container_limits(cgroup: Path = Path("/sys/fs/cgroup")) -> tuple[float | None, float | None]:
+    """The CPUs and GB of memory a container is limited to (docker run --cpus, --memory), or None for no limit."""
+    cpus = memory = None
+    try:
+        quota, period = (cgroup / "cpu.max").read_text().split()
+        if quota != "max":
+            cpus = round(int(quota) / int(period), 2)
+    except (OSError, ValueError):
+        pass
+    try:
+        limit = (cgroup / "memory.max").read_text().strip()
+        if limit != "max":
+            memory = round(int(limit) / 2**30, 1)
+    except (OSError, ValueError):
+        pass
+    return cpus, memory
+
+
 @functools.cache
 def machine_info() -> dict[str, Any]:
-    """What this worker runs on: hardware, OS and the versions of the science libraries."""
+    """What this worker runs on: hardware (a container's limits if it has them), OS and science library versions."""
+    cpus, memory = os.cpu_count(), memory_gb()
+    cpu_limit, memory_limit = container_limits()
     info = {
         "hostname": socket.gethostname(),
         "os": f"{platform.system()} {platform.release()}",
         "arch": platform.machine(),
         "cpu": cpu_model(),
-        "cpus": os.cpu_count(),
-        "memory_gb": memory_gb(),
+        "cpus": min(cpus, cpu_limit) if cpus and cpu_limit else cpus,
+        "memory_gb": min(memory, memory_limit) if memory and memory_limit else memory,
         "docker": os.path.exists("/.dockerenv"),
         "python": platform.python_version(),
     }

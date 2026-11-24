@@ -9,7 +9,7 @@ from antsearch import metrics
 from antsearch.coordinator import create_app
 from antsearch.metrics import compute, describe, report
 from antsearch.runlog import RunLog, read_events
-from antsearch.worker import connect, machine_info, register
+from antsearch.worker import connect, container_limits, machine_info, register
 
 LAPTOP = {"hostname": "laptop", "os": "Darwin 24.1.0", "arch": "arm64", "cpu": "Apple M2", "cpus": 8, "memory_gb": 16.0,
           "docker": False, "python": "3.12.4", "numpy": "2.1.0", "astropy": "6.1.0", "lightkurve": "2.5.0"}
@@ -21,6 +21,18 @@ def test_machine_info_describes_this_machine():
     assert set(info) == {"hostname", "os", "arch", "cpu", "cpus", "memory_gb", "docker", "python", "numpy", "astropy", "lightkurve"}
     assert info["cpus"] >= 1
     assert json.loads(json.dumps(info)) == info
+
+
+def test_container_limits_come_from_cgroup_files(tmp_path):
+    assert container_limits(tmp_path) == (None, None)  # not in a container
+
+    (tmp_path / "cpu.max").write_text("50000 100000\n")
+    (tmp_path / "memory.max").write_text(f"{3 * 2**29}\n")
+    assert container_limits(tmp_path) == (0.5, 1.5)
+
+    (tmp_path / "cpu.max").write_text("max 100000\n")
+    (tmp_path / "memory.max").write_text("max\n")
+    assert container_limits(tmp_path) == (None, None)
 
 
 def test_connect_retries_until_the_coordinator_answers(caplog):
@@ -118,6 +130,7 @@ def test_metrics_break_the_run_down_by_worker_and_machine(tmp_path):
 def test_describe_a_machine():
     assert describe(None) == "-"
     assert describe({"os": "Linux 6.8", "arch": "x86_64", "cpus": 4, "docker": True}) == "Linux 6.8 x86_64, 4 CPUs, in Docker"
+    assert describe({"os": "Linux 6.8", "cpus": 0.5, "memory_gb": 1.0}) == "Linux 6.8, 0.5 CPUs, 1 GB"
 
 
 def test_save_copies_the_log_and_writes_its_report(tmp_path, capsys):

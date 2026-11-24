@@ -32,6 +32,7 @@ The [Makefile](Makefile) wraps the common commands. Run `make` on its own to lis
 | `make up` / `make down` | Start or stop the local cluster in the background |
 | `make coordinator` | Start only Redis and the coordinator, for workers on other machines; see [Running across several machines](#running-across-several-machines) |
 | `make worker` | Run a worker on this machine (`COORDINATOR_URL=...` and `WORKER_ID=...`) |
+| `make machines` | Start four worker containers with different CPU and memory limits that join `make coordinator`, to rehearse a multi-machine run |
 | `make logs` / `make ps` | Follow the cluster's logs / list its containers |
 | `make submit` | Queue the first 50 stars of the TESS list on the cluster and wait for the results (`STARS=...` for another count) |
 | `make scenario` | Run a failure scenario on the cluster (`SCENARIO=scenarios/slow-worker.yaml`); see [Failure scenarios](#failure-scenarios) |
@@ -146,6 +147,8 @@ A machine without Python can run the Docker image instead. The worker then repor
 make build
 docker run --rm --stop-timeout 180 -e COORDINATOR_URL=http://192.168.1.20:8000 -e WORKER_ID=spare-pc antsearch:dev
 ```
+
+A worker in a container reports its CPU and memory limits, if it has them, instead of the VM's. To rehearse a run on one computer, `make machines` starts four worker containers sized like different computers, from a 4-CPU "desktop" down to a half-CPU "netbook". They join `make coordinator` through this machine's network address, the same way other machines would. A real transit search mostly waits on MAST downloads, so the CPU limits barely change how fast they answer. With `make machines WORKER_TASK=simulated`, each one takes a different time per star (0.5 s to 4 s), which shows how the scheduler handles uneven workers. `make down` stops them along with the coordinator.
 
 `curl http://192.168.1.20:8000/workers` shows who has joined and what each machine is. Once everyone is in, queue the stars from the coordinator machine with `make submit`. When the run is finished, `make save-run` copies the run log into `docs/runs/` with its metrics next to it. The metrics end with one line per worker: its runs, failures, outvoted results, lost runs, mean time per answer, and the machine it ran on.
 
@@ -390,6 +393,7 @@ AntSearch/
 ├── pyproject.toml      # package metadata, dependencies, pytest config
 ├── Dockerfile          # one image for the coordinator and the workers
 ├── compose.yaml        # local cluster: redis, coordinator, worker-1 to worker-3
+├── compose.machines.yaml  # make machines: four worker containers sized like different computers
 └── .github/workflows/  # CI
 ```
 

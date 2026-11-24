@@ -134,7 +134,7 @@ def describe(machine: dict[str, Any] | None) -> str:
     if machine.get("cpu"):
         parts.append(str(machine["cpu"]))
     if machine.get("cpus"):
-        parts.append(f"{machine['cpus']} CPUs")
+        parts.append(f"{machine['cpus']:g} CPU{'' if machine['cpus'] == 1 else 's'}")
     if machine.get("memory_gb"):
         parts.append(f"{machine['memory_gb']:g} GB")
     if machine.get("docker"):
