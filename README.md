@@ -125,7 +125,7 @@ A transit-search result looks like this (TOI-102, known period 4.4119 d):
 
 ## Running across several machines
 
-To run one cluster across several computers, one machine runs the coordinator and every machine runs a worker. All of them need to be on the same network.
+To run one cluster across several computers, one machine runs the coordinator and every machine runs a worker. The workers need to reach the coordinator. That works on the same Wi-Fi or a phone hotspot. Teammates who are somewhere else can use [Tailscale](https://tailscale.com): everyone installs it and signs in to one tailnet, or the coordinator's owner shares that machine with them.
 
 On the coordinator machine:
 
@@ -133,7 +133,7 @@ On the coordinator machine:
 make coordinator        # Redis and the coordinator, no local workers
 ```
 
-It prints the address to use, e.g. `http://192.168.1.20:8000`. Then on every machine, including the coordinator's own, clone the repo, run the [setup](#setup), and start a worker with a name no other machine uses:
+It prints the address to use, e.g. `http://192.168.1.20:8000`, and the Tailscale address too if the machine is on one. Then on every machine, including the coordinator's own, clone the repo, run the [setup](#setup), and start a worker with a name no other machine uses:
 
 ```bash
 make worker COORDINATOR_URL=http://192.168.1.20:8000 WORKER_ID=daniel-laptop
@@ -148,7 +148,7 @@ make build
 docker run --rm --stop-timeout 180 -e COORDINATOR_URL=http://192.168.1.20:8000 -e WORKER_ID=spare-pc antsearch:dev
 ```
 
-A worker in a container reports its CPU and memory limits, if it has them, instead of the VM's. To rehearse a run on one computer, `make machines` starts four worker containers sized like different computers, from a 4-CPU "desktop" down to a half-CPU "netbook". They join `make coordinator` through this machine's network address, the same way other machines would. A real transit search mostly waits on MAST downloads, so the CPU limits barely change how fast they answer. With `make machines WORKER_TASK=simulated`, each one takes a different time per star (0.5 s to 4 s), which shows how the scheduler handles uneven workers. `make down` stops them along with the coordinator.
+A worker in a container reports its CPU and memory limits, if it has them, instead of the VM's. To rehearse a run on one computer, `make machines` starts four worker containers sized like different computers, from a 4-CPU "desktop" down to a half-CPU "netbook". They join `make coordinator` through this machine's network address, the same way other machines would. Teammates can run it too, with `make machines COORDINATOR_URL=http://<address>:8000`. The container names start with each person's user name, e.g. `daniel-netbook`, so they don't clash. A real transit search mostly waits on MAST downloads, so the CPU limits barely change how fast they answer. With `make machines WORKER_TASK=simulated`, each one takes a different time per star (0.5 s to 4 s), which shows how the scheduler handles uneven workers. `make down` stops them along with the coordinator.
 
 `curl http://192.168.1.20:8000/workers` shows who has joined and what each machine is. Once everyone is in, queue the stars from the coordinator machine with `make submit`. When the run is finished, `make save-run` copies the run log into `docs/runs/` with its metrics next to it. The metrics end with one line per worker: its runs, failures, outvoted results, lost runs, mean time per answer, and the machine it ran on.
 

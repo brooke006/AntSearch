@@ -42,6 +42,8 @@ coordinator: ## Start only redis and the coordinator, for workers on other machi
 	$(COMPOSE) up --build -d --wait redis coordinator
 	@echo "Workers on other machines join with:"
 	@echo "  make worker COORDINATOR_URL=http://$(HOST_IP):$${ANTSEARCH_PORT:-8000} WORKER_ID=<name>"
+	@ip=$$(tailscale ip -4 2>/dev/null | head -1); test -z "$$ip" || \
+		echo "or, from machines on your Tailscale network, COORDINATOR_URL=http://$$ip:$${ANTSEARCH_PORT:-8000}"
 
 worker: ## Run a worker here: make worker COORDINATOR_URL=http://<address>:8000 WORKER_ID=<name>
 	@test -n "$(COORDINATOR_URL)" && test -n "$(WORKER_ID)" || \

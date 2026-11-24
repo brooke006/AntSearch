@@ -1,7 +1,9 @@
 # Worker containers sized like four different computers, for rehearsing a multi-machine run on one host.
 # They join a coordinator started with `make coordinator` through its network address, like other
-# machines would. Start them with `make machines`. With WORKER_TASK=simulated each one takes a different
-# time per star, since a real transit search mostly waits on downloads and barely notices the CPU limit.
+# machines would. Start them with `make machines`. Their names start with your user name, so
+# teammates can run them against the same coordinator. With WORKER_TASK=simulated each one takes a
+# different time per star, since a real transit search mostly waits on downloads and barely notices
+# the CPU limit.
 
 x-machine: &machine
   build: .
@@ -17,40 +19,40 @@ x-env: &env
 services:
   desktop:
     <<: *machine
-    hostname: desktop
+    hostname: ${USER:-local}-desktop
     cpus: 4
     mem_limit: 4g
     environment:
       <<: *env
-      WORKER_ID: desktop
+      WORKER_ID: ${USER:-local}-desktop
       SIMULATED_TASK_SECONDS: 0.5
 
   laptop:
     <<: *machine
-    hostname: laptop
+    hostname: ${USER:-local}-laptop
     cpus: 2
     mem_limit: 2g
     environment:
       <<: *env
-      WORKER_ID: laptop
+      WORKER_ID: ${USER:-local}-laptop
       SIMULATED_TASK_SECONDS: 1
 
   old-laptop:
     <<: *machine
-    hostname: old-laptop
+    hostname: ${USER:-local}-old-laptop
     cpus: 1
     mem_limit: 1.5g
     environment:
       <<: *env
-      WORKER_ID: old-laptop
+      WORKER_ID: ${USER:-local}-old-laptop
       SIMULATED_TASK_SECONDS: 2
 
   netbook:
     <<: *machine
-    hostname: netbook
+    hostname: ${USER:-local}-netbook
     cpus: 0.5
     mem_limit: 1g
     environment:
       <<: *env
-      WORKER_ID: netbook
+      WORKER_ID: ${USER:-local}-netbook
       SIMULATED_TASK_SECONDS: 4
