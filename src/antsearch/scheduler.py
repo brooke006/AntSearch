@@ -1,3 +1,11 @@
+"""Schedulers: which worker gets the task at the front of the queue.
+
+Workers pull, so a scheduler never pushes a task anywhere. Each time a worker asks, the coordinator
+calls assign() and the scheduler answers "this task" or "not you" (None), and that worker asks again
+later. round-robin and random are baselines, greedy goes by speed alone, and ant is the
+pheromone-based scheduler the project is about.
+"""
+
 import copy
 import math
 import random
@@ -7,6 +15,11 @@ from antsearch.pheromone import SHORT
 
 class Scheduler:
     def assign(self, worker_id, tasks, workers):
+        """The task worker_id should run, or None.
+
+        tasks are the pending tasks worker_id may run, front of the queue first. workers are the
+        idle workers free to run tasks[0], the ones the scheduler chooses between.
+        """
         raise NotImplementedError
 
     def on_result(self, worker_id, result, task_id=None, seconds=None, disputed=False):
@@ -17,22 +30,18 @@ class Scheduler:
 
 
 class RoundRobinScheduler(Scheduler):
+    """Baseline: workers take turns in ID order, whatever their speed."""
+
     def __init__(self):
         self.last_worker = None
         self.previous_workers = []
 
     def assign(self, worker_id, tasks, workers):
-        available_workers = []
-        for worker in workers:
-            if worker not in available_workers:
-                available_workers.append(worker)
-
-        if len(tasks) == 0 or len(available_workers) == 0:
+        available_workers = list(dict.fromkeys(workers))
+        if len(tasks) == 0 or worker_id not in available_workers:
             return None
 
-        if worker_id not in available_workers:
-            return None
-
+        # The turn goes to the worker after the last one served.
         next_worker = available_workers[0]
 
         if self.last_worker in available_workers:
@@ -208,13 +217,15 @@ class AntScheduler(Scheduler):
         if len(tasks) == 0 or worker_id not in workers:
             return None
 
+        # Draw a worker for tasks[0] and keep that pick until it asks, so whoever happens to poll
+        # first doesn't win. A new draw happens only if the pick goes busy or offline.
         if self.chosen not in workers:
             weights = self.probabilities(self.task_type_of(tasks[0]), workers)
             candidates = sorted(weights)
             self.chosen = self.random.choices(candidates, [weights[worker] for worker in candidates])[0]
 
         if worker_id != self.chosen:
-            return None
+            return None  # not you: the task waits for the chosen worker's next request
 
         self.chosen = None
         return tasks[0]
@@ -226,6 +237,7 @@ class AntScheduler(Scheduler):
             return {}
         levels = self.pheromones.levels(task_type, workers)
         speeds = self.speeds(workers)
+        # The Ant System rule: what's been learned (pheromone) times how fast the worker looks (speed).
         weights = {worker: levels[worker] ** self.alpha * speeds[worker] ** self.beta for worker in workers}
         total = sum(weights.values())
         if total == 0 or not math.isfinite(total):
@@ -270,6 +282,7 @@ class AntScheduler(Scheduler):
         # Store the worker's pair first: one that has never been written reads as the ceiling and
         # evaporation skips it, so a worker whose every result failed would otherwise stay on top.
         self.pheromones.ensure(worker_id, kind)
+        # Every run fades all levels a little; only a good run adds some back for its worker.
         self.pheromones.evaporate(self.evaporation, self.min_level)
         if "error" in result:
             return "failed"
@@ -278,6 +291,7 @@ class AntScheduler(Scheduler):
         elif typical is not None and seconds > self.late_factor * typical:
             outcome = "late"
         else:
+            # Faster than typical earns more, slower earns less.
             amount = self.evaporation * self.max_level * (typical or seconds) / seconds
             self.pheromones.add(worker_id, kind, amount, maximum=self.max_level)
             outcome = "deposited"
