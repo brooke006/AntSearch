@@ -19,7 +19,7 @@ from antsearch.submit import DEFAULT_STARS
 
 TOLERANCE = 0.01
 MIN_SNR = 7.1  # Kepler's detection threshold
-SEARCH_RANGE = (0.5, 15.0)  # days, as in pipeline.run_task
+SEARCH_RANGE = (0.5, 15.0)  # days, pipeline.MIN_PERIOD and MAX_PERIOD
 HARMONICS = (2, 3)
 
 

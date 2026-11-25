@@ -28,6 +28,7 @@ misses heartbeats is marked offline and its tasks go back on the queue.
 import asyncio
 import contextlib
 import copy
+import functools
 import json
 import logging
 import os
@@ -65,6 +66,9 @@ DEFAULT_RUN_LOG_DIR = "output/runs"
 DEFAULT_REPLICAS = 2  # what main() uses; create_app on its own doesn't replicate
 
 
+# Redis keys (listed at the top) and task lookups
+
+
 def worker_key(worker_id: str) -> str:
     return f"antsearch:worker:{worker_id}"
 
@@ -96,6 +100,14 @@ def task_status(redis_client: redis.Redis, task: dict[str, str], task_id: str) -
     return "assigned" if redis_client.hlen(task_running_key(task_id)) else "pending"
 
 
+def task_type_lookup(redis_client: redis.Redis) -> Callable[[str], str]:
+    """A function giving a task's type; tasks queued without a sector count are short."""
+    return lambda task_id: redis_client.hget(task_key(task_id), "task_type") or SHORT
+
+
+# Request bodies
+
+
 class Registration(BaseModel):
     worker_id: str
     # What the worker runs on (OS, CPU, library versions...), as flat key/value pairs.
@@ -117,6 +129,9 @@ class TaskResult(BaseModel):
     result: dict[str, Any]
 
 
+# Lost workers: requeueing their tasks
+
+
 def _queue_requeue(pipe: redis.client.Pipeline, worker_id: str) -> list[str]:
     """Read worker_id's tasks, then queue the commands that put them back at the front of the queue.
 
@@ -132,15 +147,10 @@ def _queue_requeue(pipe: redis.client.Pipeline, worker_id: str) -> list[str]:
     return task_ids
 
 
-def task_type_lookup(redis_client: redis.Redis) -> Callable[[str], str]:
-    """A function giving a task's type; tasks queued without a sector count are short."""
-    return lambda task_id: redis_client.hget(task_key(task_id), "task_type") or SHORT
-
-
 def requeue_tasks(redis_client: redis.Redis, worker_id: str) -> list[str]:
     """Put every task assigned to worker_id back at the front of the pending queue."""
     task_ids = redis_client.transaction(
-        lambda pipe: _queue_requeue(pipe, worker_id), worker_tasks_key(worker_id), value_from_callable=True
+        functools.partial(_queue_requeue, worker_id=worker_id), worker_tasks_key(worker_id), value_from_callable=True
     )
     if task_ids:
         log.info("requeued tasks %s from worker %s", ", ".join(task_ids), worker_id)
@@ -170,7 +180,7 @@ def mark_offline(redis_client: redis.Redis, now: float, timeout: float, run_log:
     marked = []
     for worker_id in sorted(redis_client.smembers(WORKERS_KEY)):
         outcome = redis_client.transaction(
-            lambda pipe: check(pipe, worker_id),
+            functools.partial(check, worker_id=worker_id),
             worker_key(worker_id),
             worker_tasks_key(worker_id),
             value_from_callable=True,
@@ -187,6 +197,9 @@ def mark_offline(redis_client: redis.Redis, now: float, timeout: float, run_log:
     return marked
 
 
+# The app
+
+
 def create_app(
     redis_client: redis.Redis,
     heartbeat_timeout: float = DEFAULT_HEARTBEAT_TIMEOUT,
@@ -201,8 +214,8 @@ def create_app(
         raise ValueError(f"replicas must be a whole number >= 1, not {replicas!r}")
     max_runs = 2 * replicas - 1
 
-    # Keep the factory's existing FIFO behavior unless a scheduler is supplied.
-    # main() chooses one from SCHEDULER (round robin by default). One process owns scheduler state.
+    # With no scheduler, tasks go first come, first served; main() always passes one. The scheduler's
+    # state lives in this process, so the lock lets only one request choose at a time.
     active_scheduler = scheduler
     scheduler_lock = threading.Lock()
 
@@ -231,6 +244,8 @@ def create_app(
         except redis.RedisError as exc:
             raise HTTPException(status_code=503, detail=f"redis unavailable: {exc}")
         return {"status": "ok"}
+
+    # Workers
 
     @app.post("/workers/register")
     def register(registration: Registration):
@@ -287,6 +302,8 @@ def create_app(
             )
         return {"workers": workers}
 
+    # Tasks
+
     @app.post("/tasks", status_code=201)
     def add_tasks(new_tasks: NewTasks):
         sectors = new_tasks.num_sectors
@@ -309,6 +326,56 @@ def create_app(
         log.info("queued %d tasks", len(task_ids))
         return {"task_ids": task_ids}
 
+    def candidates(pipe: redis.client.Pipeline, worker_ids: list[str], tasks: list[str]) -> list[str]:
+        """The workers the scheduler picks between: online, idle, and free to run the task at the front."""
+        return [
+            item
+            for item in worker_ids
+            if pipe.hget(worker_key(item), "status") == "online"
+            and pipe.scard(worker_tasks_key(item)) == 0  # holding no task
+            and not (tasks and pipe.sismember(worker_history_key(item), tasks[0]))  # hasn't run this one already
+        ]
+
+    def choose_task(pipe: redis.client.Pipeline, worker_id: str):
+        """Decide which task worker_id gets, if any, and queue the commands that hand it over.
+
+        This runs under WATCH, so if the queue or any worker changes before EXEC, redis-py raises
+        WatchError and the transaction calls this again from the start. Returns the task, its star,
+        and the scheduler copy that made the choice.
+        """
+        worker_ids = sorted(pipe.smembers(WORKERS_KEY))
+        for item in worker_ids:
+            pipe.watch(worker_key(item), worker_tasks_key(item))
+        if pipe.hget(worker_key(worker_id), "status") != "online":
+            raise HTTPException(status_code=409, detail="worker is offline")
+        # A worker never runs a task twice: skip the ones it holds or has reported on.
+        skip = pipe.smembers(worker_tasks_key(worker_id)) | pipe.smembers(worker_history_key(worker_id))
+        tasks = list(dict.fromkeys(item for item in pipe.lrange(PENDING_KEY, 0, -1) if item not in skip))
+
+        # assign() changes the scheduler (the ant scheduler remembers its pick), so choose with a
+        # copy and keep it only if the transaction commits.
+        scheduler = copy.deepcopy(active_scheduler)
+        if scheduler is None:
+            task_id = tasks[0] if tasks else None
+        else:
+            task_id = scheduler.assign(worker_id, tasks, candidates(pipe, worker_ids, tasks))
+        if task_id is not None and task_id not in tasks:
+            raise RuntimeError("scheduler selected a task outside the pending queue")
+
+        star_id = None
+        if task_id is not None:
+            pipe.watch(task_key(task_id))
+            star_id = pipe.hget(task_key(task_id), "star_id")
+        pipe.multi()
+        if task_id is None:
+            pipe.ping()  # no task, but EXEC still checks the WATCH: the copy may hold a pick for another worker
+        else:
+            pipe.lrem(PENDING_KEY, 1, task_id)  # take one of its copies off the queue
+            pipe.hincrby(task_key(task_id), "queued", -1)
+            pipe.hset(task_running_key(task_id), worker_id, clock())  # start time, for timing the run
+            pipe.sadd(worker_tasks_key(worker_id), task_id)  # the worker is busy until it reports
+        return task_id, star_id, scheduler
+
     @app.post("/tasks/request")
     def request_task(request: TaskRequest):
         nonlocal active_scheduler
@@ -317,48 +384,14 @@ def create_app(
         if require_worker(worker_id)["status"] != "online":
             raise HTTPException(status_code=409, detail=f"worker {worker_id!r} is offline; register again")
         with scheduler_lock:
-            while True:
-                try:
-                    with redis_client.pipeline() as pipe:
-                        pipe.watch(PENDING_KEY, WORKERS_KEY, worker_tasks_key(worker_id), worker_history_key(worker_id))
-                        worker_ids = sorted(pipe.smembers(WORKERS_KEY))
-                        for item in worker_ids:
-                            pipe.watch(worker_key(item), worker_tasks_key(item))
-                        if pipe.hget(worker_key(worker_id), "status") != "online":
-                            raise HTTPException(status_code=409, detail="worker is offline")
-                        # A worker never runs a task twice: skip the ones it holds or has reported on.
-                        skip = pipe.smembers(worker_tasks_key(worker_id)) | pipe.smembers(worker_history_key(worker_id))
-                        tasks = list(dict.fromkeys(item for item in pipe.lrange(PENDING_KEY, 0, -1) if item not in skip))
-                        workers = []
-                        for item in worker_ids:
-                            if pipe.hget(worker_key(item), "status") != "online":
-                                continue
-                            if active_scheduler is None:
-                                workers.append(item)
-                            elif pipe.scard(worker_tasks_key(item)) == 0 and not (tasks and pipe.sismember(worker_history_key(item), tasks[0])):
-                                # Idle, and free to run the task the scheduler is choosing for.
-                                workers.append(item)
-                        candidate = copy.deepcopy(active_scheduler)
-                        task_id = candidate.assign(worker_id, tasks, workers) if candidate else (tasks[0] if tasks else None)
-                        if task_id is not None and task_id not in tasks:
-                            raise RuntimeError("scheduler selected a task outside the pending queue")
-                        if task_id is not None:
-                            pipe.watch(task_key(task_id))
-                            star_id = pipe.hget(task_key(task_id), "star_id")
-                        pipe.multi()
-                        if task_id is not None:
-                            pipe.lrem(PENDING_KEY, 1, task_id)
-                            pipe.hincrby(task_key(task_id), "queued", -1)
-                            pipe.hset(task_running_key(task_id), worker_id, clock())
-                            pipe.sadd(worker_tasks_key(worker_id), task_id)
-                        else:
-                            pipe.ping()
-                        pipe.execute()
-                        active_scheduler = candidate
-                    break
-                except redis.WatchError:
-                    # Retry without advancing the scheduler's committed state.
-                    continue
+            task_id, star_id, active_scheduler = redis_client.transaction(
+                functools.partial(choose_task, worker_id=worker_id),
+                PENDING_KEY,
+                WORKERS_KEY,
+                worker_tasks_key(worker_id),
+                worker_history_key(worker_id),
+                value_from_callable=True,
+            )
         if task_id is None:
             return Response(status_code=204)
         run_log.record("task_assigned", task_id=task_id, star_id=star_id, worker_id=worker_id)
@@ -392,27 +425,31 @@ def create_app(
         task = pipe.hgetall(task_key(task_id))
         assigned_at = pipe.hget(task_running_key(task_id), worker_id)
         if task.get("status") == "done" or assigned_at is None:
-            return None
+            return None  # not this worker's task any more, e.g. it was marked offline and the task requeued
         running = pipe.hgetall(task_running_key(task_id))
         now = clock()
         run = {"result": result, "completed_at": now, "seconds": now - float(assigned_at)}
         earlier = [(json.loads(stored), worker) for worker, stored in pipe.hgetall(task_results_key(task_id)).items()]
         earlier.sort(key=lambda item: (item[0]["completed_at"], item[1]))
         runs = earlier + [(run, worker_id)]
+        # Other runs that could still arrive: the ones in progress besides this one, plus queued copies.
         outstanding = len(running) - 1 + int(task.get("queued", 0))
         decision = decide([item[0]["result"] for item in runs], outstanding, replicas, max_runs)
 
         pipe.multi()
+        # This worker's run is over whatever the decision: it's idle again and won't get this task back.
         pipe.hdel(task_running_key(task_id), worker_id)
         pipe.srem(worker_tasks_key(worker_id), task_id)
         pipe.sadd(worker_history_key(worker_id), task_id)
         if decision.kind in ("waiting", "rerun"):
+            # Not settled yet: keep this result, and queue more runs if the results disagree.
             pipe.hset(task_results_key(task_id), worker_id, json.dumps(run))
             if decision.runs:
                 pipe.hincrby(task_key(task_id), "queued", decision.runs)
                 pipe.lpush(PENDING_KEY, *[task_id] * decision.runs)
             return decision, runs
 
+        # Settled. Give every run a verdict; an outvoted worker is flagged.
         for index, (each, worker) in enumerate(runs):
             if decision.kind == "accepted" and index in decision.agreed:
                 each["verdict"] = "accepted"
@@ -444,7 +481,7 @@ def create_app(
         if not redis_client.exists(task_key(task_id)):
             raise HTTPException(status_code=404, detail=f"unknown task {task_id!r}")
         outcome = redis_client.transaction(
-            lambda pipe: record_result(pipe, task_id, worker_id, result),
+            functools.partial(record_result, task_id=task_id, worker_id=worker_id, result=result),
             task_key(task_id),
             task_running_key(task_id),
             task_results_key(task_id),

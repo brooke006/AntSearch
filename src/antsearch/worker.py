@@ -37,6 +37,9 @@ DEFAULT_POLL_INTERVAL = 2.0  # seconds
 Task = Callable[[str], dict[str, Any]]
 
 
+# What the worker runs on
+
+
 def cpu_model() -> str | None:
     """The CPU's marketing name, e.g. "Apple M2" or "Intel(R) Core(TM) i7-8550U", if it can be found."""
     try:
@@ -99,6 +102,9 @@ def machine_info() -> dict[str, Any]:
         except importlib.metadata.PackageNotFoundError:
             info[package] = None
     return info
+
+
+# Talking to the coordinator
 
 
 def register(client: httpx.Client, worker_id: str) -> float:
@@ -185,6 +191,9 @@ def report_result(
             return False
 
 
+# The main loop
+
+
 def run_tasks(client: httpx.Client, worker_id: str, task: Task, stop: threading.Event, poll_interval: float) -> None:
     """Request a task, run it and report the result, over and over until stop is set.
 
@@ -198,6 +207,7 @@ def run_tasks(client: httpx.Client, worker_id: str, task: Task, stop: threading.
             log.warning("task request from worker %s failed: %s", worker_id, exc)
             assignment = None
         if assignment is None:
+            # Nothing for us right now (empty queue, or the scheduler chose another worker): ask again soon.
             stop.wait(poll_interval)
             continue
         task_id, star_id = assignment["task_id"], assignment["star_id"]
@@ -242,6 +252,7 @@ def main() -> None:
         timeout = connect(client, worker_id, stop, poll_interval)
         if timeout is None:
             return
+        # Three heartbeats per timeout, so one lost heartbeat doesn't get the worker marked offline.
         heartbeats = threading.Thread(
             target=send_heartbeats, args=(client, worker_id, timeout / 3, stop), name="heartbeats", daemon=True
         )

@@ -31,6 +31,9 @@ EXIT_PERIOD_MISMATCH = 1
 EXIT_NO_DATA = 3
 EXIT_DOWNLOAD_FAILED = 4
 
+# Periods searched, in days. A TESS sector is about 27 days, so much longer periods show one transit at most.
+MIN_PERIOD = 0.5
+MAX_PERIOD = 15.0
 # Trial transit durations in days (about 1 h to 6 h).
 DEFAULT_DURATIONS = (0.04, 0.06, 0.08, 0.12, 0.16, 0.25)
 
@@ -50,6 +53,106 @@ class NoDataError(LookupError):
 
 class DownloadError(RuntimeError):
     """MAST was unreachable or kept failing on every attempt. Worth trying again later."""
+
+
+# The task a worker runs
+
+
+def run_task(star_id: str, min_period: float = MIN_PERIOD, max_period: float = MAX_PERIOD) -> dict:
+    """Search one star for transits: the unit of work a worker runs.
+
+    Searches the first SPOC 2-minute light curve MAST has for star_id (any name MAST resolves, such
+    as "TOI-102" or "WASP-18"), reusing a cached download if there is one. Returns the best signal
+    and the download and compute times in seconds, ready to send as JSON. Raises NoDataError or
+    DownloadError like download_light_curve. BLS has no flux errors, so snr is power over the scatter.
+    """
+    start = time.perf_counter()
+    raw = download_light_curve(star_id)
+    downloaded = time.perf_counter()
+    lc, result = search(raw, min_period=min_period, max_period=max_period)
+    scatter = noise(lc.flux.value)
+    sector = raw.meta.get("SECTOR")
+    return {
+        "star_id": star_id,
+        "sector": None if sector is None else int(sector),
+        **asdict(result),
+        "snr": result.power / scatter if scatter > 0 else None,
+        # Timings end in _seconds, so validation ignores them when comparing two workers' results.
+        "download_seconds": round(downloaded - start, 3),
+        "compute_seconds": round(time.perf_counter() - downloaded, 3),
+    }
+
+
+def search(raw, min_period: float = MIN_PERIOD, max_period: float = MAX_PERIOD):
+    """Flatten and BLS-search a light curve; return the flattened light curve and the best signal.
+
+    Two passes: the first finds the transits, then the light curve is re-flattened with them masked
+    out of the trend, so the filter does not eat the dip, and searched again.
+    """
+    raw = raw.remove_nans()
+    lc = flatten(raw)
+    result = run_bls(lc.time.value, lc.flux.value, min_period=min_period, max_period=max_period)
+    lc = flatten(raw, mask=transit_mask(raw.time.value, result))
+    return lc, run_bls(lc.time.value, lc.flux.value, min_period=min_period, max_period=max_period)
+
+
+def noise(flux) -> float:
+    """Scatter of a flattened light curve, from the median absolute deviation."""
+    flux = np.asarray(flux, dtype=float)
+    return float(1.4826 * np.median(np.abs(flux - np.median(flux))))
+
+
+# Search steps
+
+
+def flatten(lc, window_length: int = 901, mask=None):
+    """Normalise, remove stellar variability, then drop NaNs and upward outliers.
+
+    window_length is in cadences (901 x 2 min is about 30 h); it must be much longer than a transit.
+    mask marks in-transit cadences to leave out of the trend fit, so the filter does not eat the dip.
+    When passing a mask, pass lc.remove_nans() so the mask lines up with the cadences.
+    """
+    lc = lc.remove_nans().normalize()
+    return lc.flatten(window_length, mask=mask).remove_outliers(sigma_upper=4, sigma_lower=np.inf)
+
+
+def run_bls(
+    time,
+    flux,
+    min_period: float = MIN_PERIOD,
+    max_period: float = MAX_PERIOD,
+    durations=DEFAULT_DURATIONS,
+) -> BLSResult:
+    """Search a flattened light curve for the strongest box-shaped periodic dip."""
+    time = np.asarray(time, dtype=float)
+    flux = np.asarray(flux, dtype=float)
+    durations = [d for d in durations if d < min_period]
+    bls = BoxLeastSquares(time, flux)
+    periods = bls.autoperiod(durations, minimum_period=min_period, maximum_period=max_period, frequency_factor=0.5)
+    # Try every period and duration, and keep the one whose dip stands out most from the noise.
+    periodogram = bls.power(periods, durations, objective="snr")
+    best = int(np.argmax(periodogram.power))
+    return BLSResult(
+        period=float(periodogram.period[best]),
+        t0=float(periodogram.transit_time[best]),
+        duration=float(periodogram.duration[best]),
+        depth=float(periodogram.depth[best]),
+        power=float(periodogram.power[best]),
+    )
+
+
+def phase(time, result: BLSResult):
+    """Days from the nearest predicted mid-transit, between -period/2 and period/2."""
+    time = np.asarray(time, dtype=float)
+    return (time - result.t0 + 0.5 * result.period) % result.period - 0.5 * result.period
+
+
+def transit_mask(time, result: BLSResult, width: float = 1.5):
+    """True for cadences within width transit durations of a predicted mid-transit."""
+    return np.abs(phase(time, result)) < 0.5 * width * result.duration
+
+
+# Downloading, with a local cache
 
 
 def download_light_curve(
@@ -145,46 +248,7 @@ def read_cached(index: Path, download_dir: str | Path):
     return lc
 
 
-def flatten(lc, window_length: int = 901, mask=None):
-    """Normalise, remove stellar variability, then drop NaNs and upward outliers.
-
-    window_length is in cadences (901 x 2 min is about 30 h); it must be much longer than a transit.
-    mask marks in-transit cadences to leave out of the trend fit, so the filter does not eat the dip.
-    When passing a mask, pass lc.remove_nans() so the mask lines up with the cadences.
-    """
-    lc = lc.remove_nans().normalize()
-    return lc.flatten(window_length, mask=mask).remove_outliers(sigma_upper=4, sigma_lower=np.inf)
-
-
-def run_bls(
-    time,
-    flux,
-    min_period: float = 0.5,
-    max_period: float = 15.0,
-    durations=DEFAULT_DURATIONS,
-) -> BLSResult:
-    """Search a flattened light curve for the strongest box-shaped periodic dip."""
-    time = np.asarray(time, dtype=float)
-    flux = np.asarray(flux, dtype=float)
-    durations = [d for d in durations if d < min_period]
-    bls = BoxLeastSquares(time, flux)
-    periods = bls.autoperiod(durations, minimum_period=min_period, maximum_period=max_period, frequency_factor=0.5)
-    periodogram = bls.power(periods, durations, objective="snr")
-    best = int(np.argmax(periodogram.power))
-    return BLSResult(
-        period=float(periodogram.period[best]),
-        t0=float(periodogram.transit_time[best]),
-        duration=float(periodogram.duration[best]),
-        depth=float(periodogram.depth[best]),
-        power=float(periodogram.power[best]),
-    )
-
-
-def transit_mask(time, result: BLSResult, width: float = 1.5):
-    """True for cadences within width transit durations of a predicted mid-transit."""
-    time = np.asarray(time, dtype=float)
-    phase = (time - result.t0 + 0.5 * result.period) % result.period - 0.5 * result.period
-    return np.abs(phase) < 0.5 * width * result.duration
+# Command-line science check
 
 
 def plot_folded(time, flux, result: BLSResult, path: Path, title: str = "") -> Path:
@@ -194,9 +258,8 @@ def plot_folded(time, flux, result: BLSResult, path: Path, title: str = "") -> P
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    time = np.asarray(time, dtype=float)
     flux = np.asarray(flux, dtype=float)
-    phase_hours = ((time - result.t0 + 0.5 * result.period) % result.period - 0.5 * result.period) * 24
+    phase_hours = phase(time, result) * 24
     window = 3 * result.duration * 24
     near = np.abs(phase_hours) < window
 
@@ -220,49 +283,6 @@ def plot_folded(time, flux, result: BLSResult, path: Path, title: str = "") -> P
     return path
 
 
-def search(raw, min_period: float = 0.5, max_period: float = 15.0):
-    """Flatten and BLS-search a light curve; return the flattened light curve and the best signal.
-
-    Two passes: the first finds the transits, then the light curve is re-flattened with them masked
-    out of the trend, so the filter does not eat the dip, and searched again.
-    """
-    raw = raw.remove_nans()
-    lc = flatten(raw)
-    result = run_bls(lc.time.value, lc.flux.value, min_period=min_period, max_period=max_period)
-    lc = flatten(raw, mask=transit_mask(raw.time.value, result))
-    return lc, run_bls(lc.time.value, lc.flux.value, min_period=min_period, max_period=max_period)
-
-
-def noise(flux) -> float:
-    """Scatter of a flattened light curve, from the median absolute deviation."""
-    flux = np.asarray(flux, dtype=float)
-    return float(1.4826 * np.median(np.abs(flux - np.median(flux))))
-
-
-def run_task(star_id: str, min_period: float = 0.5, max_period: float = 15.0) -> dict:
-    """Search one star for transits: the unit of work a worker runs.
-
-    Searches the first SPOC 2-minute light curve MAST has for star_id (any name MAST resolves, such
-    as "TOI-102" or "WASP-18"), reusing a cached download if there is one. Returns the best signal
-    and the download and compute times in seconds, ready to send as JSON. Raises NoDataError or
-    DownloadError like download_light_curve. BLS has no flux errors, so snr is power over the scatter.
-    """
-    start = time.perf_counter()
-    raw = download_light_curve(star_id)
-    downloaded = time.perf_counter()
-    lc, result = search(raw, min_period=min_period, max_period=max_period)
-    scatter = noise(lc.flux.value)
-    sector = raw.meta.get("SECTOR")
-    return {
-        "star_id": star_id,
-        "sector": None if sector is None else int(sector),
-        **asdict(result),
-        "snr": result.power / scatter if scatter > 0 else None,
-        "download_seconds": round(downloaded - start, 3),
-        "compute_seconds": round(time.perf_counter() - downloaded, 3),
-    }
-
-
 def period_error(found: float, known: float) -> float:
     """Fractional difference between a recovered and a known period."""
     return abs(found - known) / known
@@ -274,8 +294,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--target", default="WASP-18", help="star name or TIC ID resolvable by MAST")
     parser.add_argument("--known-period", type=float, default=0.94145, help="published period in days")
     parser.add_argument("--sector", type=int, default=2, help="TESS sector (default 2)")
-    parser.add_argument("--min-period", type=float, default=0.5)
-    parser.add_argument("--max-period", type=float, default=15.0)
+    parser.add_argument("--min-period", type=float, default=MIN_PERIOD)
+    parser.add_argument("--max-period", type=float, default=MAX_PERIOD)
     parser.add_argument("--tolerance", type=float, default=0.01, help="allowed fractional period error")
     parser.add_argument("--attempts", type=int, default=3, help="download attempts before giving up")
     parser.add_argument("--out", type=Path, default=Path("output/folded_transit.png"))
