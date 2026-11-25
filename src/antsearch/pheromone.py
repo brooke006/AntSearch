@@ -4,6 +4,7 @@ Task types are short (one TESS sector or none) and multi_sector (two or more). E
 hash, antsearch:pheromone:<type>, of worker ID -> level, so levels survive a coordinator restart.
 """
 
+import functools
 import math
 from collections.abc import Iterable
 
@@ -114,7 +115,7 @@ class PheromoneTable:
 
         for kind in TASK_TYPES:
             key = pheromone_key(kind)
-            self.redis.transaction(lambda pipe: scale(pipe, key), key)
+            self.redis.transaction(functools.partial(scale, key=key), key)
 
     def table(self) -> dict[str, dict[str, float]]:
         """Every stored level, as {worker ID: {task type: level}}. Pairs never set are left out."""

@@ -28,6 +28,7 @@ misses heartbeats is marked offline and its tasks go back on the queue.
 import asyncio
 import contextlib
 import copy
+import functools
 import json
 import logging
 import os
@@ -149,7 +150,7 @@ def _queue_requeue(pipe: redis.client.Pipeline, worker_id: str) -> list[str]:
 def requeue_tasks(redis_client: redis.Redis, worker_id: str) -> list[str]:
     """Put every task assigned to worker_id back at the front of the pending queue."""
     task_ids = redis_client.transaction(
-        lambda pipe: _queue_requeue(pipe, worker_id), worker_tasks_key(worker_id), value_from_callable=True
+        functools.partial(_queue_requeue, worker_id=worker_id), worker_tasks_key(worker_id), value_from_callable=True
     )
     if task_ids:
         log.info("requeued tasks %s from worker %s", ", ".join(task_ids), worker_id)
@@ -179,7 +180,7 @@ def mark_offline(redis_client: redis.Redis, now: float, timeout: float, run_log:
     marked = []
     for worker_id in sorted(redis_client.smembers(WORKERS_KEY)):
         outcome = redis_client.transaction(
-            lambda pipe: check(pipe, worker_id),
+            functools.partial(check, worker_id=worker_id),
             worker_key(worker_id),
             worker_tasks_key(worker_id),
             value_from_callable=True,
@@ -384,7 +385,7 @@ def create_app(
             raise HTTPException(status_code=409, detail=f"worker {worker_id!r} is offline; register again")
         with scheduler_lock:
             task_id, star_id, active_scheduler = redis_client.transaction(
-                lambda pipe: choose_task(pipe, worker_id),
+                functools.partial(choose_task, worker_id=worker_id),
                 PENDING_KEY,
                 WORKERS_KEY,
                 worker_tasks_key(worker_id),
@@ -480,7 +481,7 @@ def create_app(
         if not redis_client.exists(task_key(task_id)):
             raise HTTPException(status_code=404, detail=f"unknown task {task_id!r}")
         outcome = redis_client.transaction(
-            lambda pipe: record_result(pipe, task_id, worker_id, result),
+            functools.partial(record_result, task_id=task_id, worker_id=worker_id, result=result),
             task_key(task_id),
             task_running_key(task_id),
             task_results_key(task_id),
