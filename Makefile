@@ -73,7 +73,7 @@ scenario: ## Run a failure scenario on the stack, e.g. SCENARIO=scenarios/slow-w
 metrics: ## Completion time, throughput and wasted work of the newest run, or of RUN=output/runs/<run>.jsonl
 	$(PYTHON) -m antsearch.metrics $(RUN)
 
-recall: ## Share of known planets the newest run (or RUN=...) rediscovered, and unvetted strong signals
+recall: ## Planet recall of the newest run (or RUN=...)
 	$(PYTHON) -m antsearch.recall $(RUN)
 
 save-run: ## Copy the newest run log (or RUN=...) into docs/runs/, with its metrics and recall

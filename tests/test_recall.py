@@ -10,7 +10,7 @@ STARS = {
     "TOI-1": {"has_planet": True, "period": 4.0},
     "TOI-2": {"has_planet": True, "period": 3.0},
     "TOI-3": {"has_planet": True, "period": 2.0},
-    "TOI-4": {"has_planet": True, "period": 20.0},  # longer than the search goes
+    "TOI-4": {"has_planet": True, "period": 20.0},
     "TOI-5": {"has_planet": False, "period": 1.5},
     "TOI-6": {"has_planet": False, "period": 6.0},
     "TOI-7": {"has_planet": False, "period": 5.0},
@@ -24,7 +24,6 @@ def signal(period, snr=20.0, depth=0.001):
 
 
 def events(results):
-    """task_queued and task_done events for {star: result or (result, outcome)}."""
     out = []
     for n, (star, result) in enumerate(results.items()):
         result, outcome = result if isinstance(result, tuple) else (result, "accepted")
@@ -39,7 +38,7 @@ def events(results):
     (8.0, 4.0, "harmonic"),
     (2.0, 4.0, "harmonic"),
     (12.05, 4.0, "harmonic"),
-    (6.0, 4.0, None),  # 3/2 is not a harmonic
+    (6.0, 4.0, None),
 ])
 def test_compare_periods(found, known, expected):
     assert compare(found, known) == expected
@@ -48,15 +47,15 @@ def test_compare_periods(found, known, expected):
 def test_recall_counts_recovered_planets_and_lists_unvetted_signals():
     result = compute(events({
         "TOI-1": signal(4.01),
-        "TOI-2": signal(6.0),  # twice the period
+        "TOI-2": signal(6.0),
         "TOI-3": signal(5.3),
         "TOI-4": signal(13.0),
-        "TOI-5": signal(1.5, snr=30),  # the false-positive signal again
-        "TOI-6": signal(2.2, snr=9),  # something else
-        "TOI-7": signal(3.0, snr=5),  # too weak to matter
+        "TOI-5": signal(1.5, snr=30),
+        "TOI-6": signal(2.2, snr=9),
+        "TOI-7": signal(3.0, snr=5),
         "TOI-8": {"error": "NoDataError", "message": "no light curve"},
         "TOI-9": (signal(7.0), "unresolved"),
-        "TOI-404": signal(1.0),  # not in the star list
+        "TOI-404": signal(1.0),
     }), STARS)
 
     assert {row["star_id"]: row["verdict"] for row in result["stars"]} == {

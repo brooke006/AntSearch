@@ -1,14 +1,6 @@
-"""How many known planets a run rediscovered, and which stars without one showed a strong signal.
+"""Planet recall: which known planets a run found again, and strong signals on the other stars.
 
-    python -m antsearch.recall                                  # the newest log in output/runs
-    python -m antsearch.recall output/runs/<run>.jsonl
-    python -m antsearch.recall --save docs/runs                 # also write <run>-recall.txt and .csv
-
-Stars and known periods come from the star list (datasets/tess_data_mixed.csv by default). A planet
-counts as recovered when the period found is within --tolerance of the known one. A period at 2 or 3
-times the known one, or a half or a third of it, is counted separately and not as recovered. Stars
-with no known planet are TOIs that were ruled false positives; a signal on one of them at or above
---min-snr is listed as unvetted, noting whether it is the same signal that was ruled out.
+    python -m antsearch.recall [output/runs/<run>.jsonl] [--save docs/runs]
 """
 
 import argparse
@@ -25,13 +17,13 @@ from antsearch.metrics import DEFAULT_LOG_DIR, newest_log
 from antsearch.runlog import read_events
 from antsearch.submit import DEFAULT_STARS
 
-TOLERANCE = 0.01  # fractional period error allowed, as in the single-star science check
-MIN_SNR = 7.1  # the detection threshold the Kepler pipeline used
-SEARCH_RANGE = (0.5, 15.0)  # days; the periods pipeline.run_task searches
+TOLERANCE = 0.01
+MIN_SNR = 7.1  # Kepler's detection threshold
+SEARCH_RANGE = (0.5, 15.0)  # days, as in pipeline.run_task
 HARMONICS = (2, 3)
 
+
 def read_star_list(path: str | Path = DEFAULT_STARS) -> dict[str, dict[str, Any]]:
-    """Star list rows by MAST name ("TOI-<star_id>"), with has_planet as a bool and period as a float."""
     with open(path, newline="") as f:
         rows = list(csv.DictReader(f))
     return {
@@ -44,7 +36,6 @@ def read_star_list(path: str | Path = DEFAULT_STARS) -> dict[str, dict[str, Any]
 
 
 def compare(found: float, known: float, tolerance: float = TOLERANCE) -> str | None:
-    """"same", "harmonic" or None for a period found against a known one."""
     if abs(found / known - 1) <= tolerance:
         return "same"
     for n in HARMONICS:
@@ -71,9 +62,8 @@ def compute(
     tolerance: float = TOLERANCE,
     min_snr: float = MIN_SNR,
 ) -> dict[str, Any]:
-    """Each star's verdict from a run's task_done events, and the recall over the known planets."""
-    queued = {}  # task ID -> star
-    done = {}  # star -> (result, outcome); the last one wins if a star was queued twice
+    queued = {}
+    done = {}
     for event in events:
         if event["event"] == "task_queued":
             queued[event["task_id"]] = event["star_id"]
