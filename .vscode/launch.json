@@ -1,0 +1,223 @@
+{
+  // Debug configs for every entry point. Redis for the coordinator:
+  //   docker run -d --name antsearch-debug-redis -p 6379:6379 redis:7-alpine
+  // and `make down` first if the compose stack is holding port 8000.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Coordinator (ant)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "antsearch.coordinator",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "env": {
+        "REDIS_URL": "redis://localhost:6379/0",
+        "SCHEDULER": "ant",
+        // A breakpoint pauses heartbeat handling too; a long timeout stops workers going offline meanwhile.
+        "HEARTBEAT_TIMEOUT": "600",
+        "COORDINATOR_HOST": "0.0.0.0"
+      }
+    },
+    {
+      "name": "Coordinator (pick scheduler)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "antsearch.coordinator",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "env": {
+        "REDIS_URL": "redis://localhost:6379/0",
+        "SCHEDULER": "${input:scheduler}",
+        "REPLICAS": "${input:replicas}",
+        "HEARTBEAT_TIMEOUT": "600",
+        "COORDINATOR_HOST": "0.0.0.0"
+      }
+    },
+    {
+      "name": "Worker 1 (simulated)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "antsearch.worker",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "env": {
+        "COORDINATOR_URL": "http://localhost:8000",
+        "WORKER_ID": "debug-1",
+        "WORKER_TASK": "simulated",
+        "SIMULATED_TASK_SECONDS": "1"
+      }
+    },
+    {
+      "name": "Worker 2 (simulated, slower)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "antsearch.worker",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "env": {
+        "COORDINATOR_URL": "http://localhost:8000",
+        "WORKER_ID": "debug-2",
+        "WORKER_TASK": "simulated",
+        "SIMULATED_TASK_SECONDS": "3"
+      }
+    },
+    {
+      "name": "Worker (real transit search)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "antsearch.worker",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "env": {
+        "COORDINATOR_URL": "http://localhost:8000",
+        "WORKER_ID": "debug-transit",
+        "WORKER_TASK": "transit"
+      }
+    },
+    {
+      "name": "Submit stars",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "antsearch.submit",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "args": ["--limit", "${input:stars}"],
+      "env": { "ANTSEARCH_URL": "http://localhost:8000" }
+    },
+    {
+      "name": "Pipeline: one star (WASP-18)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "antsearch.pipeline",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "args": []
+    },
+    {
+      "name": "Metrics: newest run",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "antsearch.metrics",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "args": []
+    },
+    {
+      "name": "Recall: newest run",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "antsearch.recall",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "args": []
+    },
+    {
+      "name": "Recall: saved 200-star run",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "antsearch.recall",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "args": ["docs/runs/20261124-181848-round-robin.jsonl"]
+    },
+    {
+      "name": "Scenario (dry run, no Docker)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "antsearch.scenario",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "args": ["${input:scenario}", "--dry-run"]
+    },
+    {
+      "name": "Scenario (against `make up`)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "antsearch.scenario",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "args": ["${input:scenario}", "--log", "output/scenarios/debug.jsonl"]
+    },
+    {
+      "name": "Sweep (small, writes to output/)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "antsearch.sweep",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      // Small and single-process so breakpoints are quick to reach; the default run rewrites docs/.
+      "args": ["--seeds", "2", "--stars", "20", "--processes", "1", "--out-dir", "output/sweep-debug"]
+    },
+    {
+      "name": "Tests: current file",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "args": ["${file}", "-x", "-q"],
+      "justMyCode": false
+    },
+    {
+      // Used by the debug button in the Testing panel.
+      "name": "Tests: Testing panel",
+      "type": "debugpy",
+      "request": "launch",
+      "purpose": ["debug-test"],
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ],
+  "compounds": [
+    {
+      // Workers retry until the coordinator answers, so start order doesn't matter.
+      "name": "Cluster: coordinator + 2 simulated workers",
+      "configurations": ["Coordinator (ant)", "Worker 1 (simulated)", "Worker 2 (simulated, slower)"],
+      "stopAll": true
+    }
+  ],
+  "inputs": [
+    {
+      "id": "scheduler",
+      "type": "pickString",
+      "description": "Scheduler",
+      "options": ["ant", "greedy", "random", "round-robin"],
+      "default": "ant"
+    },
+    {
+      "id": "replicas",
+      "type": "pickString",
+      "description": "Runs per star",
+      "options": ["1", "2", "3"],
+      "default": "2"
+    },
+    {
+      "id": "stars",
+      "type": "promptString",
+      "description": "How many stars to queue",
+      "default": "10"
+    },
+    {
+      "id": "scenario",
+      "type": "pickString",
+      "description": "Scenario",
+      "options": ["scenarios/slow-worker.yaml", "scenarios/crash-and-recover.yaml"]
+    }
+  ]
+}
