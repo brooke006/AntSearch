@@ -172,14 +172,15 @@ def test_run_log_records_a_lost_task_and_metrics_count_it_as_wasted(api):
     names = [e["event"] for e in mine]
     for name in ("task_queued", "task_assigned", "task_requeued", "result_rejected", "task_done"):
         assert name in names, names
-    assert [e["worker_id"] for e in mine if e["event"] == "task_assigned"][0] == worker_id
+    # The task has two copies and a compose worker may have taken the first, so look for this worker's.
+    assert worker_id in [e["worker_id"] for e in mine if e["event"] == "task_assigned"]
     assert {"worker_offline"} <= {e["event"] for e in events if e.get("worker_id") == worker_id}
     assert [e["time"] for e in mine] == sorted(e["time"] for e in mine)
 
     metrics = compute(events)
     assert metrics["late_results"] >= 1
-    assigned = next(e["time"] for e in mine if e["event"] == "task_assigned")
-    reported = next(e["time"] for e in mine if e["event"] == "result_rejected")
+    assigned = next(e["time"] for e in mine if e["event"] == "task_assigned" and e["worker_id"] == worker_id)
+    reported = next(e["time"] for e in mine if e["event"] == "result_rejected" and e["worker_id"] == worker_id)
     assert metrics["lost_seconds"] >= reported - assigned  # it reported late, so all that time counts
     assert metrics["tasks_succeeded"] > 0
     assert metrics["completion_seconds"] > 0
