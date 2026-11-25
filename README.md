@@ -4,6 +4,8 @@
 
 A Python volunteer-computing system for exoplanet searches using ant-inspired task scheduling.
 
+See [docs/architecture.md](docs/architecture.md) for diagrams of the components, which file does what, and the system's inputs and outputs.
+
 ## Setup
 
 Requires Python 3.10 or newer.
@@ -37,7 +39,8 @@ The [Makefile](Makefile) wraps the common commands. Run `make` on its own to lis
 | `make submit` | Queue the first 50 stars of the TESS list on the cluster and wait for the results (`STARS=...` for another count) |
 | `make scenario` | Run a failure scenario on the cluster (`SCENARIO=scenarios/slow-worker.yaml`); see [Failure scenarios](#failure-scenarios) |
 | `make metrics` | Completion time, throughput and wasted work of the newest run (`RUN=output/runs/<run>.jsonl` for another); see [Run logs and metrics](#run-logs-and-metrics) |
-| `make save-run` | Copy the newest run log (or `RUN=...`) into `docs/runs/`, with its metrics next to it |
+| `make recall` | Share of known planets the newest run (or `RUN=...`) found again, and strong signals on stars with no known planet; see [Planet recall](#planet-recall) |
+| `make save-run` | Copy the newest run log (or `RUN=...`) into `docs/runs/`, with its metrics and recall next to it |
 | `make sweep` | Simulate the ant scheduler over a grid of alpha, beta and evaporation (about 11 minutes on 10 cores); see [docs/parameter-sweep.md](docs/parameter-sweep.md) |
 | `make test` | Unit and science tests (everything that doesn't need Docker) |
 | `make test-unit` | Fast tests only: coordinator, replication, worker, submit, scenarios, run logs, pheromone table, package |
@@ -120,7 +123,7 @@ A transit-search result looks like this (TOI-102, known period 4.4119 d):
 
 ```json
 {"star_id": "TOI-102", "sector": 1, "period": 4.41305, "t0": 1326.0756, "duration": 0.12,
- "depth": 0.0131, "power": 0.283, "download_seconds": 43.96, "compute_seconds": 6.31}
+ "depth": 0.0131, "power": 0.283, "snr": 317.0, "download_seconds": 43.96, "compute_seconds": 6.31}
 ```
 
 ## Running across several machines
@@ -363,12 +366,40 @@ To try another star, pass `--target`, `--known-period` and `--sector`, e.g. `--t
 
 It flattens twice: the first BLS pass finds the transits, then the light curve is re-flattened with them masked so the detrending filter doesn't eat the dip.
 
-For workers, the same search is packaged as `pipeline.run_task(star_id)`, which takes any name MAST resolves (such as `TOI-102`), searches the star's first SPOC 2-minute light curve and returns a JSON-ready dict: the best period, mid-transit time, duration and depth, the BLS `power` (its signal-to-noise objective), and `download_seconds` and `compute_seconds`. A cached star's download time drops to tens of milliseconds. For TOI-102 (known period 4.4119 d):
+For workers, the same search is packaged as `pipeline.run_task(star_id)`, which takes any name MAST resolves (such as `TOI-102`), searches the star's first SPOC 2-minute light curve and returns a JSON-ready dict: the best period, mid-transit time, duration and depth, the BLS `power`, the signal-to-noise ratio `snr`, and `download_seconds` and `compute_seconds`. BLS runs without flux errors, so `power` is the signal-to-noise for errors of 1; `snr` divides it by the flattened light curve's scatter (1.4826 times the median absolute deviation) to give the real one. A cached star's download time drops to tens of milliseconds. For TOI-102 (known period 4.4119 d):
 
 ```json
 {"star_id": "TOI-102", "sector": 1, "period": 4.41305, "t0": 1326.0756, "duration": 0.12,
- "depth": 0.0131, "power": 0.283, "download_seconds": 52.56, "compute_seconds": 7.40}
+ "depth": 0.0131, "power": 0.283, "snr": 317.0, "download_seconds": 52.56, "compute_seconds": 7.40}
 ```
+
+## Planet recall
+
+`make recall` checks a run's results against the star list: how many of its known planets the search found again, and which stars without a known planet showed a strong signal. It reads the newest run log by default, or `RUN=output/runs/<run>.jsonl`, and `make save-run` saves its report with the run as `<run>-recall.txt`, plus `<run>-recall.csv` with one row per star.
+
+```bash
+make recall
+```
+
+Each star in the list gets one verdict:
+
+| Verdict | Meaning |
+|---|---|
+| `recovered` | Known planet, found period within 1% of the known one (`--tolerance`) |
+| `harmonic` | Known planet, found at 2 or 3 times the period, or a half or a third of it |
+| `missed` | Known planet, found at some other period |
+| `unvetted` | No known planet, but a signal with SNR of at least 7.1 (`--min-snr`), the threshold the Kepler pipeline used |
+| `quiet` | No known planet and no strong signal |
+| `failed` | The search failed, usually because MAST has no 2-minute light curve |
+| `unresolved` | The workers never agreed on a result |
+
+Recall is recovered planets over the planet stars with a result (recovered, harmonic or missed). Harmonics don't count. Failed and unresolved stars are left out and reported separately. The report also gives recall over the planets whose known period is in the range searched, 0.5 to 15 days: a planet with a longer period can't be recovered, and with one sector of data it may show only one transit.
+
+The stars with no known planet are TOIs that were ruled false positives, often eclipsing binaries, so many have a real signal. Each unvetted signal is listed with a note saying whether it's the same signal that was ruled out (within the tolerance of its listed period, or a harmonic of it) or a new one. None of them has been checked by eye, which is why they're unvetted rather than candidates.
+
+Results for the whole star list are in [docs/planet-recall.md](docs/planet-recall.md).
+
+The search only reports the strongest signal on each star. A known planet counts as missed if that signal is something else, for example a second planet in the system or stellar variability that flattening didn't remove.
 
 ## Project layout
 
@@ -379,6 +410,7 @@ AntSearch/
 │   ├── metrics.py      # completion time, throughput and wasted work from a run log
 │   ├── pheromone.py    # pheromone table: a level per worker and task type, stored in Redis
 │   ├── pipeline.py     # transit search: download, flatten, BLS, folded plot; run_task() for workers
+│   ├── recall.py       # share of known planets a run found again, and unvetted strong signals
 │   ├── runlog.py       # run log: one JSON line per assignment, result and failure
 │   ├── scenario.py     # failure scenarios: CPU limits, network delay, kills and restarts on a timeline
 │   ├── submit.py       # queue stars from a star list and wait for the results
@@ -386,7 +418,7 @@ AntSearch/
 │   ├── validation.py   # comparing results from different workers, and settling a task
 │   ├── worker.py       # worker: registers, heartbeats, pulls tasks, runs them, reports results
 │   └── datasets/       # TESS star list (tess_data_mixed.csv) and the script that rebuilt it
-├── docs/               # parameter sweep write-up and results, references, saved run logs (runs/)
+├── docs/               # architecture diagrams, parameter sweep write-up and results, references, saved run logs (runs/)
 ├── scenarios/          # example failure scenarios for antsearch.scenario
 ├── tests/              # pytest tests; test_integration.py needs a running cluster
 ├── Makefile            # build, run, test and coverage shortcuts (`make help`)

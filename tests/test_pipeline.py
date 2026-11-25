@@ -10,7 +10,7 @@ import numpy as np
 import requests
 
 from antsearch import pipeline
-from antsearch.pipeline import BLSResult, flatten, period_error, plot_folded, run_bls, transit_mask
+from antsearch.pipeline import BLSResult, flatten, noise, period_error, plot_folded, run_bls, transit_mask
 
 PERIOD = 3.2  # days
 T0 = 1.1
@@ -231,4 +231,12 @@ def test_run_task_returns_json_ready_signal_and_timings(monkeypatch):
     assert period_error(result["period"], PERIOD) < 0.01
     assert result["depth"] == pytest.approx(DEPTH, rel=0.1)
     assert result["power"] > 0
+    assert result["snr"] == pytest.approx(130, rel=0.25)
     assert result["download_seconds"] >= 0 and result["compute_seconds"] > 0
+
+
+def test_noise_is_the_scatter_and_ignores_a_few_outliers():
+    flux = 1 + np.random.default_rng(1).normal(0, 0.002, 10_000)
+    flux[:20] -= 0.05
+
+    assert noise(flux) == pytest.approx(0.002, rel=0.05)

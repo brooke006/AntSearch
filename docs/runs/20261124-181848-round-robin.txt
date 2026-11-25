@@ -1,0 +1,19 @@
+docs/runs/20261124-181848-round-robin.jsonl
+scheduler:       round-robin
+tasks:           200 queued, 189 succeeded, 11 failed, 0 unfinished
+completion time: 1144.9 s
+mean turnaround: 613.4 s per task
+throughput:      9.9 succeeded tasks per minute
+wasted work:     111.4 s of 6679.8 s worker time (1.7%)
+  lost with a worker: 0.0 s (runs lost: 0, reported too late: 0)
+  failed runs:        111.4 s (tasks failed: 11)
+  outvoted runs:      0.0 s (runs outvoted: 0)
+extra runs:      0 (queued because results disagreed)
+
+worker  runs  failed  outvoted  lost  mean answer  machine
+mac-1     33       0         0     0       33.7 s  Darwin 27.0.0 arm64, Apple M5, 10 CPUs, 24 GB
+mac-2     32       2         0     0       36.2 s  Darwin 27.0.0 arm64, Apple M5, 10 CPUs, 24 GB
+mac-3     35       4         0     0       34.8 s  Darwin 27.0.0 arm64, Apple M5, 10 CPUs, 24 GB
+mac-4     35       2         0     0       33.4 s  Darwin 27.0.0 arm64, Apple M5, 10 CPUs, 24 GB
+mac-5     35       2         0     0       33.4 s  Darwin 27.0.0 arm64, Apple M5, 10 CPUs, 24 GB
+mac-6     30       1         0     0       37.5 s  Darwin 27.0.0 arm64, Apple M5, 10 CPUs, 24 GB

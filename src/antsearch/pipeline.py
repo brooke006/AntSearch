@@ -233,23 +233,31 @@ def search(raw, min_period: float = 0.5, max_period: float = 15.0):
     return lc, run_bls(lc.time.value, lc.flux.value, min_period=min_period, max_period=max_period)
 
 
+def noise(flux) -> float:
+    """Scatter of a flattened light curve, from the median absolute deviation."""
+    flux = np.asarray(flux, dtype=float)
+    return float(1.4826 * np.median(np.abs(flux - np.median(flux))))
+
+
 def run_task(star_id: str, min_period: float = 0.5, max_period: float = 15.0) -> dict:
     """Search one star for transits: the unit of work a worker runs.
 
     Searches the first SPOC 2-minute light curve MAST has for star_id (any name MAST resolves, such
     as "TOI-102" or "WASP-18"), reusing a cached download if there is one. Returns the best signal
     and the download and compute times in seconds, ready to send as JSON. Raises NoDataError or
-    DownloadError like download_light_curve.
+    DownloadError like download_light_curve. BLS has no flux errors, so snr is power over the scatter.
     """
     start = time.perf_counter()
     raw = download_light_curve(star_id)
     downloaded = time.perf_counter()
-    _, result = search(raw, min_period=min_period, max_period=max_period)
+    lc, result = search(raw, min_period=min_period, max_period=max_period)
+    scatter = noise(lc.flux.value)
     sector = raw.meta.get("SECTOR")
     return {
         "star_id": star_id,
         "sector": None if sector is None else int(sector),
         **asdict(result),
+        "snr": result.power / scatter if scatter > 0 else None,
         "download_seconds": round(downloaded - start, 3),
         "compute_seconds": round(time.perf_counter() - downloaded, 3),
     }
