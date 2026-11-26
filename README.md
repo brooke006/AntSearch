@@ -223,7 +223,7 @@ The coordinator writes one JSON line per event, with `time` in Unix seconds on i
 | `result_received` | `task_id`, `worker_id`, `result` (a failed run's result has an `error` key) |
 | `task_rerun` | `task_id`, `runs`, `reason`: the results disagree, so more runs were queued |
 | `result_disputed` | `task_id`, `worker_id`, `result`: a result the other workers outvoted |
-| `task_done` | `task_id`, `result`, `outcome` (`accepted` or `unresolved`), `agreed` (the workers whose results matched), `worker_id` (the first of them), and for the ant scheduler `pheromone`: each run's worker mapped to `deposited`, `failed`, `late` or `disputed` |
+| `task_done` | `task_id`, `result`, `outcome` (`accepted` or `unresolved`), `agreed` (the workers whose results matched), `worker_id` (the first of them), and for the ant scheduler `pheromone`: each run's worker mapped to `deposited`, `failed`, `late` or `disputed`, and `levels`: every worker's pheromone level per task type once this task's updates are applied |
 | `task_requeued` | `task_id`, `worker_id`, `reason` (`offline` or `reregistered`), `last_heartbeat` |
 | `result_rejected` | `task_id`, `worker_id`, `status`, `result` |
 

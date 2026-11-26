@@ -5,7 +5,8 @@
     python -m antsearch.metrics --save docs/runs              # keep the log and its report in docs/runs
 
 Wasted work is worker time spent on runs that were lost, failed or outvoted. The README explains
-how each metric is measured. The report ends with a line per worker and the machine it ran on.
+how each metric is measured. The report ends with a line per worker: its runs, its pheromone level
+at the end of the run (ant scheduler only) and the machine it ran on.
 """
 
 import argparse
@@ -32,6 +33,7 @@ def compute(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
     taken_away = {}  # (task ID, worker ID) -> (time assigned, seconds already counted as lost)
     run_seconds = {}  # (task ID, worker ID) -> how long its finished run took
     workers = {}  # worker ID -> its own counts
+    levels = {}  # worker ID -> {task type: pheromone level}, as of the last task the ant scheduler settled
     succeeded = failed = lost_runs = late_results = disputed_runs = reruns = 0
     useful_seconds = failed_seconds = lost_seconds = disputed_seconds = 0.0
 
@@ -79,6 +81,7 @@ def compute(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
             if key in running:  # a log from before replication: this was also the run's result
                 run_finished(key, time, event["result"])
             finished[event["task_id"]] = time
+            levels = event.get("levels") or levels
             if "error" in event["result"]:
                 failed += 1
             else:
@@ -98,7 +101,10 @@ def compute(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
 
     completion = max(finished.values()) - min(queued.values()) if finished and queued else None
     turnarounds = [finished[task] - queued[task] for task in finished if task in queued]
-    for counts in workers.values():
+    for worker_id in levels:
+        worker(worker_id)
+    for worker_id, counts in workers.items():
+        counts["pheromone"] = levels.get(worker_id, {})
         answers = counts["runs"] - counts["failed"]
         counts["mean_answer_seconds"] = counts.pop("answer_seconds") / answers if answers else None
     wasted = failed_seconds + lost_seconds + disputed_seconds
@@ -174,13 +180,19 @@ def worker_table(workers: dict[str, dict[str, Any]]) -> list[str]:
     if not workers:
         return []
     width = max(len("worker"), *(len(worker_id) for worker_id in workers))
-    lines = ["", f"{'worker':<{width}}  runs  failed  outvoted  lost  mean answer  machine"]
+    # One pheromone column per task type the run used, short first; none if the scheduler wasn't ant.
+    kinds = sorted({kind for counts in workers.values() for kind in counts["pheromone"]}, key=lambda kind: (kind != "short", kind))
+    headers = ["pheromone" if kinds == ["short"] else f"pheromone {kind}" for kind in kinds]
+    lines = ["", f"{'worker':<{width}}  runs  failed  outvoted  lost  mean answer  " + "".join(f"{h}  " for h in headers) + "machine"]
     for worker_id, counts in workers.items():
         mean = counts["mean_answer_seconds"]
         mean = f"{mean:.1f} s" if mean is not None else "-"
+        levels = [counts["pheromone"].get(kind) for kind in kinds]
+        cells = [f"{level:.2f}" if level is not None else "-" for level in levels]
+        pheromone = "".join(f"{cell:>{len(header)}}  " for header, cell in zip(headers, cells))
         lines.append(
             f"{worker_id:<{width}}  {counts['runs']:>4}  {counts['failed']:>6}  {counts['outvoted']:>8}  "
-            f"{counts['lost']:>4}  {mean:>11}  {describe(counts['machine'])}"
+            f"{counts['lost']:>4}  {mean:>11}  {pheromone}{describe(counts['machine'])}"
         )
     return lines
 

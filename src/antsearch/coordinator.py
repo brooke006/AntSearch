@@ -502,7 +502,7 @@ def create_app(
             return {"task_id": task_id, "status": task_status(redis_client, {}, task_id)}
 
         # Settled: now the scheduler learns from every run, knowing which ones were outvoted.
-        pheromone = {}
+        pheromone, levels = {}, None
         with scheduler_lock:
             if active_scheduler is not None:
                 for run, worker in runs:
@@ -510,13 +510,15 @@ def create_app(
                     effect = active_scheduler.on_result(worker, run["result"], task_id=task_id, seconds=run["seconds"], disputed=disputed)
                     if effect:
                         pheromone[worker] = effect
+                if pheromone:  # only the ant scheduler has levels; read them while no other result can change them
+                    levels = active_scheduler.pheromones.table()
         for run, worker in runs:
             if run["verdict"] == "disputed":
                 run_log.record("result_disputed", task_id=task_id, worker_id=worker, result=run["result"])
                 log.warning("task %s: worker %s's result was outvoted; flagged", task_id, worker)
         agreed = [runs[index][1] for index in decision.agreed]
         task = redis_client.hgetall(task_key(task_id))
-        details = {"pheromone": pheromone} if pheromone else {}
+        details = {"pheromone": pheromone, "levels": levels} if pheromone else {}
         run_log.record(
             "task_done",
             task_id=task_id,

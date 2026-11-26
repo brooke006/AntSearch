@@ -118,8 +118,8 @@ def test_metrics_break_the_run_down_by_worker_and_machine(tmp_path):
     result = compute(read_events(path))
 
     assert result["workers"] == {
-        "desktop": {"machine": None, "runs": 1, "failed": 0, "outvoted": 0, "lost": 0, "mean_answer_seconds": 4.0},
-        "laptop": {"machine": LAPTOP, "runs": 3, "failed": 1, "outvoted": 0, "lost": 0, "mean_answer_seconds": 20.0},
+        "desktop": {"machine": None, "runs": 1, "failed": 0, "outvoted": 0, "lost": 0, "mean_answer_seconds": 4.0, "pheromone": {}},
+        "laptop": {"machine": LAPTOP, "runs": 3, "failed": 1, "outvoted": 0, "lost": 0, "mean_answer_seconds": 20.0, "pheromone": {}},
     }
     lines = report(result).splitlines()
     assert lines[-3].split() == ["worker", "runs", "failed", "outvoted", "lost", "mean", "answer", "machine"]
