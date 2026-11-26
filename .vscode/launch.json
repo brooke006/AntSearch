@@ -96,9 +96,7 @@
       "code": "print('make machines started; follow them with: docker compose -p antsearch-machines -f compose.machines.yaml logs -f')"
     },
     {
-      // The worker code a machine runs (prefetch, slowdown, the transit search), here in the
-      // debugger, without Docker's CPU and memory limits.
-      "name": "Worker (like a machine: prefetch + slowdown)",
+      "name": "Worker (debug-mac: shared cache + slowdown)",
       "type": "debugpy",
       "request": "launch",
       "module": "antsearch.worker",
@@ -107,10 +105,8 @@
       "console": "integratedTerminal",
       "env": {
         "COORDINATOR_URL": "http://localhost:8000",
-        "WORKER_ID": "debug-machine-cached${input:prefetch}",
+        "WORKER_ID": "debug-mac",
         "WORKER_TASK": "transit",
-        "PREFETCH": "${input:prefetch}",
-        "PREFETCH_FROM": "20",
         "SLOWDOWN": "${input:slowdown}"
       }
     },
@@ -259,12 +255,6 @@
       "type": "pickString",
       "description": "Scenario",
       "options": ["scenarios/slow-worker.yaml", "scenarios/crash-and-recover.yaml"]
-    },
-    {
-      "id": "prefetch",
-      "type": "promptString",
-      "description": "Stars to prefetch before registering (0 for none)",
-      "default": "6"
     },
     {
       "id": "slowdown",
