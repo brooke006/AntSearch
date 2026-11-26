@@ -115,6 +115,7 @@ When it registers, the worker sends a short description of its machine: OS, CPU,
 | `WORKER_ID` | the host name | Name to register as |
 | `WORKER_TASK` | `transit` | `transit` runs the transit search; `simulated` waits `SIMULATED_TASK_SECONDS` and returns a fake result, for tests and scheduler experiments that shouldn't hit MAST |
 | `SIMULATED_TASK_SECONDS` | `1` | How long a simulated task takes |
+| `SLOWDOWN` | `1` | Makes each task take this many times as long, to stand in for a slower machine. The worker waits after the task and scales the reported timings to match |
 | `POLL_INTERVAL` | `2` | Seconds between task requests while the queue is empty |
 
 To run a worker outside Docker against a cluster started with `make up`: `make worker COORDINATOR_URL=http://localhost:8000 WORKER_ID=laptop`.
@@ -151,7 +152,7 @@ make build
 docker run --rm --stop-timeout 180 -e COORDINATOR_URL=http://192.168.1.20:8000 -e WORKER_ID=spare-pc antsearch:dev
 ```
 
-A worker in a container reports its CPU and memory limits, if it has them, instead of the VM's. To rehearse a run on one computer, `make machines` starts five worker containers sized like different computers, from a 4-CPU "desktop" down to a quarter-CPU "potato". They join `make coordinator` through this machine's network address, the same way other machines would. Teammates can run it too, with `make machines COORDINATOR_URL=http://<address>:8000`. The container names start with each person's user name, e.g. `daniel-netbook`, so they don't clash. A real transit search mostly waits on MAST downloads, so the CPU limits barely change how fast they answer. With `make machines WORKER_TASK=simulated`, each one takes a different time per star (0.5 s to 8 s), which shows how the scheduler handles uneven workers. `make down` stops them along with the coordinator.
+A worker in a container reports its CPU and memory limits, if it has them, instead of the VM's. To rehearse a run on one computer, `make machines` starts five worker containers sized like different computers, from a 4-CPU "desktop" down to a quarter-CPU "potato". They join `make coordinator` through this machine's network address, the same way other machines would. Teammates can run it too, with `make machines COORDINATOR_URL=http://<address>:8000`. The container names start with each person's user name, e.g. `daniel-netbook`, so they don't clash. A real transit search mostly waits on MAST downloads, so the CPU limits barely change how fast they answer. With `make machines WORKER_TASK=simulated`, each one takes a different time per star (0.5 s to 8 s), which shows how the scheduler handles uneven workers. The potato also has `SLOWDOWN=4`, so it stays four times slower on real searches too. `make down` stops them along with the coordinator.
 
 `curl http://192.168.1.20:8000/workers` shows who has joined and what each machine is. Once everyone is in, queue the stars from the coordinator machine with `make submit`. When the run is finished, `make save-run` copies the run log into `docs/runs/` with its metrics next to it. The metrics end with one line per worker: its runs, failures, outvoted results, lost runs, mean time per answer, and the machine it ran on.
 

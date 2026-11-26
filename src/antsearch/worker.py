@@ -9,6 +9,8 @@ Environment:
     WORKER_TASK             transit (default) runs the TESS transit search; simulated just waits
                             SIMULATED_TASK_SECONDS (default 1) and returns a fake result, for
                             tests and experiments that shouldn't download from MAST
+    SLOWDOWN                makes each task take this many times as long, to stand in for a slower
+                            machine (default 1)
     POLL_INTERVAL           seconds between task requests when the queue is empty (default 2)
 """
 
@@ -223,15 +225,34 @@ def simulated_task(star_id: str, seconds: float) -> dict[str, Any]:
     return {"star_id": star_id, "simulated": True, "compute_seconds": seconds}
 
 
-def load_task(name: str, simulated_seconds: float = 1.0) -> Task:
-    """The task function WORKER_TASK names: transit or simulated."""
+def slowed_task(star_id: str, task: Task, factor: float) -> dict[str, Any]:
+    """Run task, then wait so the run takes factor times as long, as if on a slower machine.
+
+    The result's timings are scaled to match, so schedulers that read them see the same slow
+    worker the coordinator's clock does. A task that raises isn't slowed.
+    """
+    start = time.monotonic()
+    result = task(star_id)
+    time.sleep((factor - 1) * (time.monotonic() - start))
+    return {
+        key: value * factor if key.endswith("_seconds") and type(value) in (int, float) else value
+        for key, value in result.items()
+    }
+
+
+def load_task(name: str, simulated_seconds: float = 1.0, slowdown: float = 1.0) -> Task:
+    """The task function WORKER_TASK names (transit or simulated), slowed down slowdown times."""
+    if slowdown < 1:
+        raise ValueError(f"SLOWDOWN must be at least 1, not {slowdown}")
     if name == "transit":
         from antsearch.pipeline import run_task  # needs the science extra, so only imported here
 
-        return run_task
-    if name == "simulated":
-        return functools.partial(simulated_task, seconds=simulated_seconds)
-    raise ValueError(f"unknown WORKER_TASK {name!r}; use transit or simulated")
+        task = run_task
+    elif name == "simulated":
+        task = functools.partial(simulated_task, seconds=simulated_seconds)
+    else:
+        raise ValueError(f"unknown WORKER_TASK {name!r}; use transit or simulated")
+    return task if slowdown == 1 else functools.partial(slowed_task, task=task, factor=slowdown)
 
 
 def main() -> None:
@@ -240,9 +261,12 @@ def main() -> None:
     coordinator_url = os.environ.get("COORDINATOR_URL", "http://localhost:8000")
     worker_id = os.environ.get("WORKER_ID") or socket.gethostname()
     poll_interval = float(os.environ.get("POLL_INTERVAL", DEFAULT_POLL_INTERVAL))
+    slowdown = float(os.environ.get("SLOWDOWN", 1.0))
     task = load_task(
-        os.environ.get("WORKER_TASK", "transit"), float(os.environ.get("SIMULATED_TASK_SECONDS", 1.0))
+        os.environ.get("WORKER_TASK", "transit"), float(os.environ.get("SIMULATED_TASK_SECONDS", 1.0)), slowdown
     )
+    if slowdown != 1:
+        log.info("worker %s slowed down %g times", worker_id, slowdown)
 
     stop = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):

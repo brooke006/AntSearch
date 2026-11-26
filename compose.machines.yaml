@@ -3,7 +3,8 @@
 # machines would. Start them with `make machines`. Their names start with your user name, so
 # teammates can run them against the same coordinator. With WORKER_TASK=simulated each one takes a
 # different time per star, since a real transit search mostly waits on downloads and barely notices
-# the CPU limit.
+# the CPU limit. So potato also has SLOWDOWN, which makes every run take four times as long, real or
+# simulated, so there's always one clearly slow worker for the scheduler to learn about.
 
 x-machine: &machine
   build: .
@@ -65,4 +66,5 @@ services:
     environment:
       <<: *env
       WORKER_ID: ${USER:-local}-potato
-      SIMULATED_TASK_SECONDS: 8
+      SIMULATED_TASK_SECONDS: 2  # 8 s with the slowdown
+      SLOWDOWN: 4
