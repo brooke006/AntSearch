@@ -105,7 +105,8 @@
       "console": "integratedTerminal",
       "env": {
         "COORDINATOR_URL": "http://localhost:8000",
-        "WORKER_ID": "debug-mac",
+        // Each running worker needs its own name: two with the same one are treated as one worker.
+        "WORKER_ID": "${input:macWorkerId}",
         "WORKER_TASK": "transit",
         "SLOWDOWN": "${input:slowdown}"
       }
@@ -262,6 +263,12 @@
       "description": "Slowdown (potato uses 4)",
       "options": ["1", "2", "4"],
       "default": "1"
+    },
+    {
+      "id": "macWorkerId",
+      "type": "promptString",
+      "description": "Worker name (debug-mac-2 and so on for a second one running at the same time)",
+      "default": "debug-mac"
     }
   ]
 }
