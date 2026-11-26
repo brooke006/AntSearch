@@ -1,5 +1,3 @@
-# Local dev stack: Redis, the coordinator and three workers.
-#   docker compose up --build
 
 x-worker: &worker
   build: .
