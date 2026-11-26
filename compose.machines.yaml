@@ -1,5 +1,7 @@
 # Worker containers simulating different machine sizes for multi-machine testing.
 # Start with `make machines` (or COPIES=N) against `make coordinator`.
+# `make machines PREFETCH=1` gives each machine a random number of cached stars (DESKTOP_PREFETCH
+# and so on), shown in its name, e.g. daniel-desktop-cached12.
 
 x-machine: &machine
   build: .
@@ -11,6 +13,7 @@ x-env: &env
   COORDINATOR_URL: ${COORDINATOR_URL:-http://host.docker.internal:8000}
   WORKER_TASK: ${WORKER_TASK:-transit}
   POLL_INTERVAL: ${POLL_INTERVAL:-2}
+  PREFETCH_FROM: ${PREFETCH_FROM:-20}
 
 services:
   desktop:
@@ -20,7 +23,8 @@ services:
     mem_limit: 4g
     environment:
       <<: *env
-      WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-desktop
+      WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-desktop${DESKTOP_PREFETCH:+-cached${DESKTOP_PREFETCH}}
+      PREFETCH: ${DESKTOP_PREFETCH:-0}
       SIMULATED_TASK_SECONDS: 0.5
 
   laptop:
@@ -30,7 +34,8 @@ services:
     mem_limit: 2g
     environment:
       <<: *env
-      WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-laptop
+      WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-laptop${LAPTOP_PREFETCH:+-cached${LAPTOP_PREFETCH}}
+      PREFETCH: ${LAPTOP_PREFETCH:-0}
       SIMULATED_TASK_SECONDS: 1
 
   old-laptop:
@@ -40,7 +45,8 @@ services:
     mem_limit: 1.5g
     environment:
       <<: *env
-      WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-old-laptop
+      WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-old-laptop${OLD_LAPTOP_PREFETCH:+-cached${OLD_LAPTOP_PREFETCH}}
+      PREFETCH: ${OLD_LAPTOP_PREFETCH:-0}
       SIMULATED_TASK_SECONDS: 2
 
   netbook:
@@ -50,7 +56,8 @@ services:
     mem_limit: 1g
     environment:
       <<: *env
-      WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-netbook
+      WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-netbook${NETBOOK_PREFETCH:+-cached${NETBOOK_PREFETCH}}
+      PREFETCH: ${NETBOOK_PREFETCH:-0}
       SIMULATED_TASK_SECONDS: 4
 
   potato:
@@ -60,6 +67,7 @@ services:
     mem_limit: 1g
     environment:
       <<: *env
-      WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-potato
+      WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-potato${POTATO_PREFETCH:+-cached${POTATO_PREFETCH}}
+      PREFETCH: ${POTATO_PREFETCH:-0}
       SIMULATED_TASK_SECONDS: 2
       SLOWDOWN: 4

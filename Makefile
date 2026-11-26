@@ -5,6 +5,8 @@ PYTEST  := $(PYTHON) -m pytest
 
 STARS   ?= 50
 COPIES  ?= 1
+PREFETCH ?=
+PREFETCH_COUNTS ?= 0 6 10 12 18
 SCENARIO ?=
 RUN     ?=
 
@@ -47,14 +49,25 @@ worker: ## Run a worker here: make worker COORDINATOR_URL=http://<address>:8000 
 		{ echo "usage: make worker COORDINATOR_URL=http://<address>:8000 WORKER_ID=<a name no other machine uses>"; exit 2; }
 	COORDINATOR_URL=$(COORDINATOR_URL) WORKER_ID=$(WORKER_ID) $(PYTHON) -m antsearch.worker
 
-machines: ## Start worker containers with different CPU/memory limits (COPIES=N)
+machines: ## Start worker containers with different CPU/memory limits (COPIES=N; PREFETCH=1 caches random stars on each)
 	@for n in $$(seq 1 $(COPIES)); do \
-		suffix=$$([ $$n = 1 ] || echo $$n); \
-		project=antsearch-machines$${suffix:+-$$suffix}; \
+		if [ $$n -eq 1 ]; then \
+			project=antsearch-machines; \
+			prefix=$${MACHINE_PREFIX:-$${USER:-local}}; \
+			build="--build"; \
+		else \
+			project=antsearch-machines-$$n; \
+			prefix=$${MACHINE_PREFIX:-$${USER:-local}}$$n; \
+			build=""; \
+		fi; \
 		echo "starting $$project"; \
-		MACHINE_PREFIX=$${MACHINE_PREFIX:-$${USER:-local}}$$suffix \
+		counts=$$([ -z "$(PREFETCH)" ] || $(PYTHON) -c 'import random, sys; c = sys.argv[1:]; random.shuffle(c); print(*c)' $(PREFETCH_COUNTS)); \
+		set -- $$counts; \
+		[ -z "$$counts" ] || echo "  cached stars: desktop $$1, laptop $$2, old-laptop $$3, netbook $$4, potato $$5"; \
+		DESKTOP_PREFETCH=$$1 LAPTOP_PREFETCH=$$2 OLD_LAPTOP_PREFETCH=$$3 NETBOOK_PREFETCH=$$4 POTATO_PREFETCH=$$5 \
+		MACHINE_PREFIX=$$prefix \
 		COORDINATOR_URL=$${COORDINATOR_URL:-http://$(HOST_IP):$${ANTSEARCH_PORT:-8000}} \
-			$(MACHINES) -p $$project up -d $$([ $$n = 1 ] && echo --build) || exit 1; \
+			$(MACHINES) -p $$project up -d $$build || exit 1; \
 	done
 
 down: ## Stop the compose stack and all worker machines

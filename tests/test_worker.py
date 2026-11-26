@@ -14,6 +14,8 @@ from antsearch.worker import (
     execute,
     load_task,
     machine_info,
+    prefetch,
+    prefetch_stars,
     register,
     report_result,
     request_task,
@@ -205,9 +207,11 @@ def test_slowed_task_waits_and_scales_the_timings(monkeypatch):
     slept = []
     monkeypatch.setattr(time, "monotonic", lambda: next(clock))
     monkeypatch.setattr(time, "sleep", slept.append)
-    task = lambda star_id: {"star_id": star_id, "period": 1.5, "download_seconds": 1.5, "compute_seconds": 0.5}
 
-    result = slowed_task("TOI-1", task, factor=4)
+    def dummy_task(star_id):
+        return {"star_id": star_id, "period": 1.5, "download_seconds": 1.5, "compute_seconds": 0.5}
+
+    result = slowed_task("TOI-1", dummy_task, factor=4)
 
     assert slept == [6.0]
     assert result == {"star_id": "TOI-1", "period": 1.5, "download_seconds": 6.0, "compute_seconds": 2.0}
@@ -218,6 +222,43 @@ def test_load_task_with_a_slowdown_slows_the_task():
     start = time.monotonic()
     assert task("TOI-1")["compute_seconds"] == pytest.approx(0.06)
     assert time.monotonic() - start >= 0.06
+
+
+def flaky_download(star_id):
+    """Module level, so a process pool can pickle it."""
+    if star_id == "TOI-2":
+        raise ConnectionError("MAST is down")
+
+
+def test_prefetch_downloads_in_processes_and_skips_failures(caplog):
+    assert prefetch(["TOI-1", "TOI-2", "TOI-3"], flaky_download, threading.Event(), processes=2) == 2
+    assert "prefetching star TOI-2 failed: ConnectionError: MAST is down" in caplog.text
+
+
+def test_prefetch_drops_the_stars_not_started_once_stopped():
+    from concurrent.futures import ThreadPoolExecutor
+
+    stop = threading.Event()
+    downloaded = []
+
+    def download(star_id):
+        downloaded.append(star_id)
+        stop.set()
+
+    succeeded = prefetch([f"TOI-{n}" for n in range(10)], download, stop, processes=1, executor=ThreadPoolExecutor)
+    # The pool may start the next star before the first one's result comes back, but no more.
+    assert succeeded == len(downloaded) <= 2
+
+
+def test_prefetch_stars_picks_at_random_from_the_first_stars():
+    import random
+
+    first = submit.read_stars(limit=20)
+    picked = prefetch_stars(6, 20, random.Random(1))
+
+    assert len(set(picked)) == 6 and set(picked) <= set(first)
+    assert picked == prefetch_stars(6, 20, random.Random(1)) != prefetch_stars(6, 20, random.Random(2))
+    assert sorted(prefetch_stars(50, 5)) == sorted(submit.read_stars(limit=5))  # can't pick more than there are
 
 
 def test_two_workers_process_50_stars_through_the_coordinator():
