@@ -1,7 +1,8 @@
 # Worker containers sized like five different computers, for rehearsing a multi-machine run on one host.
 # They join a coordinator started with `make coordinator` through its network address, like other
-# machines would. Start them with `make machines`. Their names start with your user name, so
-# teammates can run them against the same coordinator. With WORKER_TASK=simulated each one takes a
+# machines would. Start them with `make machines`. Their names start with your user name (or
+# MACHINE_PREFIX), so teammates can run them against the same coordinator, and `make machines COPIES=3`
+# starts three sets named daniel-*, daniel2-* and daniel3-*. With WORKER_TASK=simulated each one takes a
 # different time per star, since a real transit search mostly waits on downloads and barely notices
 # the CPU limit. So potato also has SLOWDOWN, which makes every run take four times as long, real or
 # simulated, so there's always one clearly slow worker for the scheduler to learn about.
@@ -20,51 +21,51 @@ x-env: &env
 services:
   desktop:
     <<: *machine
-    hostname: ${USER:-local}-desktop
+    hostname: ${MACHINE_PREFIX:-${USER:-local}}-desktop
     cpus: 4
     mem_limit: 4g
     environment:
       <<: *env
-      WORKER_ID: ${USER:-local}-desktop
+      WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-desktop
       SIMULATED_TASK_SECONDS: 0.5
 
   laptop:
     <<: *machine
-    hostname: ${USER:-local}-laptop
+    hostname: ${MACHINE_PREFIX:-${USER:-local}}-laptop
     cpus: 2
     mem_limit: 2g
     environment:
       <<: *env
-      WORKER_ID: ${USER:-local}-laptop
+      WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-laptop
       SIMULATED_TASK_SECONDS: 1
 
   old-laptop:
     <<: *machine
-    hostname: ${USER:-local}-old-laptop
+    hostname: ${MACHINE_PREFIX:-${USER:-local}}-old-laptop
     cpus: 1
     mem_limit: 1.5g
     environment:
       <<: *env
-      WORKER_ID: ${USER:-local}-old-laptop
+      WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-old-laptop
       SIMULATED_TASK_SECONDS: 2
 
   netbook:
     <<: *machine
-    hostname: ${USER:-local}-netbook
+    hostname: ${MACHINE_PREFIX:-${USER:-local}}-netbook
     cpus: 0.5
     mem_limit: 1g
     environment:
       <<: *env
-      WORKER_ID: ${USER:-local}-netbook
+      WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-netbook
       SIMULATED_TASK_SECONDS: 4
 
   potato:
     <<: *machine
-    hostname: ${USER:-local}-potato
+    hostname: ${MACHINE_PREFIX:-${USER:-local}}-potato
     cpus: 0.25
     mem_limit: 1g
     environment:
       <<: *env
-      WORKER_ID: ${USER:-local}-potato
+      WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-potato
       SIMULATED_TASK_SECONDS: 2  # 8 s with the slowdown
       SLOWDOWN: 4

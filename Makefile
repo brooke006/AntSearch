@@ -6,12 +6,13 @@ IMAGE   ?= antsearch:dev
 PYTEST  := $(PYTHON) -m pytest
 
 STARS   ?= 50
+COPIES  ?= 1
 SCENARIO ?=
 RUN     ?=
 
 # This machine's address on the local network, which workers on other machines connect to.
 HOST_IP  = $(shell ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | cut -d' ' -f1)
-MACHINES := $(COMPOSE) -p antsearch-machines -f compose.machines.yaml
+MACHINES := $(COMPOSE) -f compose.machines.yaml
 
 # Integration tests get their own compose project, port and a short heartbeat timeout,
 # so they never touch a dev stack started with `make up`. Their workers run simulated tasks
@@ -50,11 +51,21 @@ worker: ## Run a worker here: make worker COORDINATOR_URL=http://<address>:8000 
 		{ echo "usage: make worker COORDINATOR_URL=http://<address>:8000 WORKER_ID=<a name no other machine uses>"; exit 2; }
 	COORDINATOR_URL=$(COORDINATOR_URL) WORKER_ID=$(WORKER_ID) $(PYTHON) -m antsearch.worker
 
-machines: ## Start five worker containers with different CPU and memory limits that join `make coordinator`
-	COORDINATOR_URL=$${COORDINATOR_URL:-http://$(HOST_IP):$${ANTSEARCH_PORT:-8000}} $(MACHINES) up --build -d
+machines: ## Start five worker containers with different CPU and memory limits that join `make coordinator` (COPIES=3 for fifteen)
+	@# Set 1 is compose project antsearch-machines with workers like daniel-potato, set 2 is antsearch-machines-2 with daniel2-potato.
+	@for n in $$(seq 1 $(COPIES)); do \
+		suffix=$$([ $$n = 1 ] || echo $$n); \
+		project=antsearch-machines$${suffix:+-$$suffix}; \
+		echo "starting $$project"; \
+		MACHINE_PREFIX=$${MACHINE_PREFIX:-$${USER:-local}}$$suffix \
+		COORDINATOR_URL=$${COORDINATOR_URL:-http://$(HOST_IP):$${ANTSEARCH_PORT:-8000}} \
+			$(MACHINES) -p $$project up -d $$([ $$n = 1 ] && echo --build) || exit 1; \
+	done
 
-down: ## Stop the stack started by `make up` or `make coordinator`, and any `make machines` workers
-	$(MACHINES) down
+down: ## Stop the stack started by `make up` or `make coordinator`, and every set of `make machines` workers
+	@for project in $$($(COMPOSE) ls --all --quiet --filter name=antsearch-machines); do \
+		echo "stopping $$project"; $(MACHINES) -p $$project down; \
+	done
 	$(COMPOSE) down
 
 logs: ## Follow the stack's logs
