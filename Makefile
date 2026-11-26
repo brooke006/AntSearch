@@ -50,7 +50,7 @@ worker: ## Run a worker here: make worker COORDINATOR_URL=http://<address>:8000 
 		{ echo "usage: make worker COORDINATOR_URL=http://<address>:8000 WORKER_ID=<a name no other machine uses>"; exit 2; }
 	COORDINATOR_URL=$(COORDINATOR_URL) WORKER_ID=$(WORKER_ID) $(PYTHON) -m antsearch.worker
 
-machines: ## Start four worker containers with different CPU and memory limits that join `make coordinator`
+machines: ## Start five worker containers with different CPU and memory limits that join `make coordinator`
 	COORDINATOR_URL=$${COORDINATOR_URL:-http://$(HOST_IP):$${ANTSEARCH_PORT:-8000}} $(MACHINES) up --build -d
 
 down: ## Stop the stack started by `make up` or `make coordinator`, and any `make machines` workers

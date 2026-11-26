@@ -1,4 +1,4 @@
-# Worker containers sized like four different computers, for rehearsing a multi-machine run on one host.
+# Worker containers sized like five different computers, for rehearsing a multi-machine run on one host.
 # They join a coordinator started with `make coordinator` through its network address, like other
 # machines would. Start them with `make machines`. Their names start with your user name, so
 # teammates can run them against the same coordinator. With WORKER_TASK=simulated each one takes a
@@ -56,3 +56,13 @@ services:
       <<: *env
       WORKER_ID: ${USER:-local}-netbook
       SIMULATED_TASK_SECONDS: 4
+
+  potato:
+    <<: *machine
+    hostname: ${USER:-local}-potato
+    cpus: 0.25
+    mem_limit: 1g
+    environment:
+      <<: *env
+      WORKER_ID: ${USER:-local}-potato
+      SIMULATED_TASK_SECONDS: 8
