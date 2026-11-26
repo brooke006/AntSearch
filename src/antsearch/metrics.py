@@ -183,7 +183,8 @@ def worker_table(workers: dict[str, dict[str, Any]]) -> list[str]:
     # One pheromone column per task type the run used, short first; none if the scheduler wasn't ant.
     kinds = sorted({kind for counts in workers.values() for kind in counts["pheromone"]}, key=lambda kind: (kind != "short", kind))
     headers = ["pheromone" if kinds == ["short"] else f"pheromone {kind}" for kind in kinds]
-    lines = ["", f"{'worker':<{width}}  runs  failed  outvoted  lost  mean answer  " + "".join(f"{h}  " for h in headers) + "machine"]
+    p_headers = "".join(f"{h}  " for h in headers)
+    lines = ["", f"{'worker':<{width}}  runs  failed  outvoted  lost  mean answer  {p_headers}machine"]
     for worker_id, counts in workers.items():
         mean = counts["mean_answer_seconds"]
         mean = f"{mean:.1f} s" if mean is not None else "-"

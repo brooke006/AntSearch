@@ -371,7 +371,8 @@ def test_other_schedulers_log_no_pheromone_outcome(redis_client, tmp_path):
         client.post("/tasks/t1/result", json={"worker_id": "w1", "result": ok()})
 
     done = [event for event in read_events(tmp_path / "run.jsonl") if event["event"] == "task_done"]
-    assert "pheromone" not in done[0] and "levels" not in done[0]
+    assert "pheromone" not in done[0]
+    assert "levels" not in done[0]
 
 
 def test_levels_learned_before_a_restart_carry_on_after_it():

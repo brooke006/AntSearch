@@ -232,15 +232,18 @@ def test_report_shows_each_workers_pheromone_from_the_last_task_done():
     }
     header, fast, slow = text.splitlines()[-3:]
     assert "pheromone  machine" in header
-    assert fast.split()[:7] == ["fast", "2", "0", "0", "0", "1.0", "s"] and "0.95" in fast
-    assert slow.split()[:6] == ["slow", "0", "0", "0", "0", "-"] and "0.20" in slow
+    assert fast.split()[:7] == ["fast", "2", "0", "0", "0", "1.0", "s"]
+    assert "0.95" in fast
+    assert slow.split()[:6] == ["slow", "0", "0", "0", "0", "-"]
+    assert "0.20" in slow
 
 
 def test_report_has_a_pheromone_column_per_task_type_and_none_without_the_ant_scheduler():
     levels = {"w1": {"short": 0.5, "multi_sector": 0.25}, "w2": {"short": 0.75}}
     text = report(compute([queued(0, "t1"), {**done(1, "t1", "w1"), "pheromone": {"w1": "deposited"}, "levels": levels}]))
     assert "pheromone short  pheromone multi_sector  machine" in text
-    assert "0.25" in text.splitlines()[-2] and text.splitlines()[-1].split()[-3:] == ["0.75", "-", "-"]
+    assert "0.25" in text.splitlines()[-2]
+    assert text.splitlines()[-1].split()[-3:] == ["0.75", "-", "-"]
 
     assert "pheromone" not in report(compute([queued(0, "t1"), assigned(0, "t1", "w1"), done(1, "t1", "w1")]))
 
