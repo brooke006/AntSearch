@@ -263,7 +263,7 @@ The coordinator started with `python -m antsearch.coordinator` uses round robin 
 
 ### Replication
 
-Each star runs on `REPLICAS` different workers (default 2) and is accepted once that many results match ([validation.py](src/antsearch/validation.py)). Two results match if they have the same keys and values. Timings (keys ending in `_seconds`) are ignored, and numbers may differ by a relative 1e-6, since two machines can round the same calculation differently. Failed runs match if they failed with the same error type, so a star MAST has no data for is accepted as failed.
+Each star runs on `REPLICAS` different workers (default 2) and is accepted once that many results match ([validation.py](src/antsearch/validation.py)). Two results match if they have the same keys and values. Timings (keys ending in `_seconds`) are ignored, and numbers may differ by 1%, since two machines can round the same calculation differently.Failed runs match if they failed with the same error type, so a star MAST has no data for is accepted as failed.
 
 When the results disagree, another worker that hasn't run the star gets a further run, up to `2 * REPLICAS - 1` runs (3 by default), so the majority wins. If still no two agree, the task is done with outcome `unresolved` and an `Unresolved` error as its result.
 
