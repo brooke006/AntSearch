@@ -1,11 +1,5 @@
-# Worker containers sized like five different computers, for rehearsing a multi-machine run on one host.
-# They join a coordinator started with `make coordinator` through its network address, like other
-# machines would. Start them with `make machines`. Their names start with your user name (or
-# MACHINE_PREFIX), so teammates can run them against the same coordinator, and `make machines COPIES=3`
-# starts three sets named daniel-*, daniel2-* and daniel3-*. With WORKER_TASK=simulated each one takes a
-# different time per star, since a real transit search mostly waits on downloads and barely notices
-# the CPU limit. So potato also has SLOWDOWN, which makes every run take four times as long, real or
-# simulated, so there's always one clearly slow worker for the scheduler to learn about.
+# Worker containers simulating different machine sizes for multi-machine testing.
+# Start with `make machines` (or COPIES=N) against `make coordinator`.
 
 x-machine: &machine
   build: .
@@ -67,5 +61,5 @@ services:
     environment:
       <<: *env
       WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-potato
-      SIMULATED_TASK_SECONDS: 2  # 8 s with the slowdown
+      SIMULATED_TASK_SECONDS: 2
       SLOWDOWN: 4

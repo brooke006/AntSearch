@@ -4,8 +4,8 @@
 x-worker: &worker
   build: .
   command: ["python", "-m", "antsearch.worker"]
-  cap_add: [NET_ADMIN]  # lets failure scenarios add network delay with tc
-  stop_grace_period: 3m  # let a running transit search finish and report before the worker exits; a first download can take over a minute
+  cap_add: [NET_ADMIN]  # for tc in failure scenarios
+  stop_grace_period: 3m  # allow running transit searches to finish
   depends_on:
     coordinator:
       condition: service_healthy
@@ -29,12 +29,11 @@ services:
       COORDINATOR_HOST: 0.0.0.0
       COORDINATOR_PORT: "8000"
       HEARTBEAT_TIMEOUT: ${HEARTBEAT_TIMEOUT:-30}
-      # Each star runs on this many workers and needs that many matching results. Settling a
-      # mismatch needs a worker that hasn't run the star yet, hence the third worker below.
+      # Number of matching worker results required to settle a star
       REPLICAS: ${REPLICAS:-2}
       SCHEDULER: ${SCHEDULER:-round-robin}
       SCHEDULER_SEED: ${SCHEDULER_SEED:-}
-      # Ant scheduler settings from the parameter sweep (docs/parameter-sweep.md); keep in step with scheduler.py.
+      # Ant scheduler parameters (docs/parameter-sweep.md)
       SCHEDULER_ALPHA: ${SCHEDULER_ALPHA:-1}
       SCHEDULER_BETA: ${SCHEDULER_BETA:-4}
       SCHEDULER_EVAPORATION: ${SCHEDULER_EVAPORATION:-0.2}

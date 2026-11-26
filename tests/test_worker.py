@@ -209,7 +209,7 @@ def test_slowed_task_waits_and_scales_the_timings(monkeypatch):
 
     result = slowed_task("TOI-1", task, factor=4)
 
-    assert slept == [6.0]  # the task took 2 s, so wait 6 more for 8 in all
+    assert slept == [6.0]
     assert result == {"star_id": "TOI-1", "period": 1.5, "download_seconds": 6.0, "compute_seconds": 2.0}
 
 

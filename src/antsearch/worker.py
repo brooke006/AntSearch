@@ -226,11 +226,7 @@ def simulated_task(star_id: str, seconds: float) -> dict[str, Any]:
 
 
 def slowed_task(star_id: str, task: Task, factor: float) -> dict[str, Any]:
-    """Run task, then wait so the run takes factor times as long, as if on a slower machine.
-
-    The result's timings are scaled to match, so schedulers that read them see the same slow
-    worker the coordinator's clock does. A task that raises isn't slowed.
-    """
+    """Run task and scale reported timings by factor, sleeping to simulate a slower worker."""
     start = time.monotonic()
     result = task(star_id)
     time.sleep((factor - 1) * (time.monotonic() - start))

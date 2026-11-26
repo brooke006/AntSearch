@@ -228,7 +228,7 @@ def test_report_shows_each_workers_pheromone_from_the_last_task_done():
     text = report(result)
 
     assert {worker: counts["pheromone"] for worker, counts in result["workers"].items()} == {
-        "fast": {"short": 0.95}, "slow": {"short": 0.2},  # slow never ran here, but it has a level
+        "fast": {"short": 0.95}, "slow": {"short": 0.2},
     }
     header, fast, slow = text.splitlines()[-3:]
     assert "pheromone  machine" in header

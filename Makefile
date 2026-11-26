@@ -1,5 +1,3 @@
-# Common tasks. Run `make` or `make help` for the list.
-
 PYTHON  ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 COMPOSE ?= docker compose
 IMAGE   ?= antsearch:dev
@@ -10,13 +8,11 @@ COPIES  ?= 1
 SCENARIO ?=
 RUN     ?=
 
-# This machine's address on the local network, which workers on other machines connect to.
+# Local IP for multi-machine workers
 HOST_IP  = $(shell ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | cut -d' ' -f1)
 MACHINES := $(COMPOSE) -f compose.machines.yaml
 
-# Integration tests get their own compose project, port and a short heartbeat timeout,
-# so they never touch a dev stack started with `make up`. Their workers run simulated tasks
-# instead of downloading from MAST.
+# Isolated compose stack for integration tests
 IT_PORT    ?= 8001
 IT_RUNS    := ./output/runs-it
 IT_COMPOSE := ANTSEARCH_PORT=$(IT_PORT) RUN_LOG_DIR=$(IT_RUNS) HEARTBEAT_TIMEOUT=3 WORKER_TASK=simulated SIMULATED_TASK_SECONDS=0.2 \
@@ -51,8 +47,7 @@ worker: ## Run a worker here: make worker COORDINATOR_URL=http://<address>:8000 
 		{ echo "usage: make worker COORDINATOR_URL=http://<address>:8000 WORKER_ID=<a name no other machine uses>"; exit 2; }
 	COORDINATOR_URL=$(COORDINATOR_URL) WORKER_ID=$(WORKER_ID) $(PYTHON) -m antsearch.worker
 
-machines: ## Start five worker containers with different CPU and memory limits that join `make coordinator` (COPIES=3 for fifteen)
-	@# Set 1 is compose project antsearch-machines with workers like daniel-potato, set 2 is antsearch-machines-2 with daniel2-potato.
+machines: ## Start worker containers with different CPU/memory limits (COPIES=N)
 	@for n in $$(seq 1 $(COPIES)); do \
 		suffix=$$([ $$n = 1 ] || echo $$n); \
 		project=antsearch-machines$${suffix:+-$$suffix}; \
@@ -62,7 +57,7 @@ machines: ## Start five worker containers with different CPU and memory limits t
 			$(MACHINES) -p $$project up -d $$([ $$n = 1 ] && echo --build) || exit 1; \
 	done
 
-down: ## Stop the stack started by `make up` or `make coordinator`, and every set of `make machines` workers
+down: ## Stop the compose stack and all worker machines
 	@for project in $$($(COMPOSE) ls --all --quiet --filter name=antsearch-machines); do \
 		echo "stopping $$project"; $(MACHINES) -p $$project down; \
 	done
