@@ -70,11 +70,13 @@ machines: ## Start worker containers with different CPU/memory limits (COPIES=N;
 			$(MACHINES) -p $$project up -d $$build || exit 1; \
 	done
 
-down: ## Stop the compose stack and all worker machines
+down: ## Stop the compose stack, all worker machines and the VS Code debug Redis
 	@for project in $$($(COMPOSE) ls --all --quiet --filter name=antsearch-machines); do \
 		echo "stopping $$project"; $(MACHINES) -p $$project down; \
 	done
 	$(COMPOSE) down
+	@# Started by the coordinator debug configs (.vscode/tasks.json); the next debug launch makes a fresh one.
+	@! docker inspect antsearch-debug-redis > /dev/null 2>&1 || { docker rm -f antsearch-debug-redis > /dev/null && echo "removed antsearch-debug-redis"; }
 
 logs: ## Follow the stack's logs
 	$(COMPOSE) logs -f

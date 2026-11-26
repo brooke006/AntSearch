@@ -212,7 +212,7 @@ make metrics
 make down
 ```
 
-A run lasts from `make up` to `make down`. The run's name is kept in Redis, so a coordinator that restarts mid-run carries on with the same file, and `make down` clears it so the next `make up` starts a new one. Run `make down` before changing `SCHEDULER`, or one log will mix two schedulers (`make metrics` warns if it does). Set `RUN_LOG_DIR` to keep the logs somewhere else; a path for `make up` needs to start with `./` or `/`.
+A run lasts from `make up` to `make down`. The run's name is kept in Redis, so a coordinator that restarts mid-run carries on with the same file, and `make down` clears it so the next `make up` starts a new one. The same goes for a coordinator run in the VS Code debugger, which keeps its Redis in an `antsearch-debug-redis` container that `make down` also removes. Run `make down` before changing `SCHEDULER`, or one log will mix two schedulers (`make metrics` warns if it does). Set `RUN_LOG_DIR` to keep the logs somewhere else; a path for `make up` needs to start with `./` or `/`.
 
 The coordinator writes one JSON line per event, with `time` in Unix seconds on its own clock:
 

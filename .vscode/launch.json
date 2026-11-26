@@ -1,7 +1,7 @@
 {
-  // Debug configs for every entry point. Redis for the coordinator:
-  //   docker run -d --name antsearch-debug-redis -p 6379:6379 redis:7-alpine
-  // and `make down` first if the compose stack is holding port 8000.
+  // Debug configs for every entry point. The coordinator configs start their own Redis first
+  // (the "Debug Redis: start" task in tasks.json), and stop if the compose stack holds port 8000.
+  // Tasks also clear that Redis and start `make machines` workers that join the debugger.
   "version": "0.2.0",
   "configurations": [
     {
@@ -12,6 +12,7 @@
       "python": "${workspaceFolder}/.venv/bin/python",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
+      "preLaunchTask": "Debug Redis: start",
       "env": {
         "REDIS_URL": "redis://localhost:6379/0",
         "SCHEDULER": "ant",
@@ -28,6 +29,7 @@
       "python": "${workspaceFolder}/.venv/bin/python",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
+      "preLaunchTask": "Debug Redis: start",
       "env": {
         "REDIS_URL": "redis://localhost:6379/0",
         "SCHEDULER": "${input:scheduler}",
@@ -78,6 +80,38 @@
         "COORDINATOR_URL": "http://localhost:8000",
         "WORKER_ID": "debug-transit",
         "WORKER_TASK": "transit"
+      }
+    },
+    {
+      // The make machines containers run in Docker, outside the debugger, so breakpoints don't stop
+      // them. This just starts them (the "Machines: start" task), and they join the coordinator you're
+      // debugging. Stop them with make down.
+      "name": "Machines: start (Docker, not debugged)",
+      "type": "debugpy",
+      "request": "launch",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole",
+      "preLaunchTask": "Machines: start",
+      "code": "print('make machines started; follow them with: docker compose -p antsearch-machines -f compose.machines.yaml logs -f')"
+    },
+    {
+      // The worker code a machine runs (prefetch, slowdown, the transit search), here in the
+      // debugger, without Docker's CPU and memory limits.
+      "name": "Worker (like a machine: prefetch + slowdown)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "antsearch.worker",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "env": {
+        "COORDINATOR_URL": "http://localhost:8000",
+        "WORKER_ID": "debug-machine-cached${input:prefetch}",
+        "WORKER_TASK": "transit",
+        "PREFETCH": "${input:prefetch}",
+        "PREFETCH_FROM": "20",
+        "SLOWDOWN": "${input:slowdown}"
       }
     },
     {
@@ -190,6 +224,13 @@
       "name": "Cluster: coordinator + 2 simulated workers",
       "configurations": ["Coordinator (ant)", "Worker 1 (simulated)", "Worker 2 (simulated, slower)"],
       "stopAll": true
+    },
+    {
+      // The machines entry finishes as soon as the containers are up, so stopAll would stop the
+      // coordinator with it. Stop the coordinator yourself, and the containers with make down.
+      "name": "Cluster: coordinator + make machines",
+      "configurations": ["Coordinator (ant)", "Machines: start (Docker, not debugged)"],
+      "stopAll": false
     }
   ],
   "inputs": [
@@ -218,6 +259,19 @@
       "type": "pickString",
       "description": "Scenario",
       "options": ["scenarios/slow-worker.yaml", "scenarios/crash-and-recover.yaml"]
+    },
+    {
+      "id": "prefetch",
+      "type": "promptString",
+      "description": "Stars to prefetch before registering (0 for none)",
+      "default": "6"
+    },
+    {
+      "id": "slowdown",
+      "type": "pickString",
+      "description": "Slowdown (potato uses 4)",
+      "options": ["1", "2", "4"],
+      "default": "1"
     }
   ]
 }
