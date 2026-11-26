@@ -1,7 +1,5 @@
 # Worker containers simulating different machine sizes for multi-machine testing.
-# Start with `make machines` (or COPIES=N) against `make coordinator`.
-# `make machines PREFETCH=1` gives each machine a random number of cached stars (DESKTOP_PREFETCH
-# and so on), shown in its name, e.g. daniel-desktop-cached12.
+# Start with `make machines` (or COPIES=N, PREFETCH=1) against `make coordinator`.
 
 x-machine: &machine
   build: .

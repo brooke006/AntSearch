@@ -232,7 +232,8 @@ def test_run_task_returns_json_ready_signal_and_timings(monkeypatch):
     assert result["depth"] == pytest.approx(DEPTH, rel=0.1)
     assert result["power"] > 0
     assert result["snr"] == pytest.approx(130, rel=0.25)
-    assert result["download_seconds"] >= 0 and result["compute_seconds"] > 0
+    assert result["download_seconds"] >= 0
+    assert result["compute_seconds"] > 0
 
 
 def test_noise_is_the_scatter_and_ignores_a_few_outliers():

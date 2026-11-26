@@ -246,8 +246,8 @@ def test_prefetch_drops_the_stars_not_started_once_stopped():
         stop.set()
 
     succeeded = prefetch([f"TOI-{n}" for n in range(10)], download, stop, processes=1, executor=ThreadPoolExecutor)
-    # The pool may start the next star before the first one's result comes back, but no more.
-    assert succeeded == len(downloaded) <= 2
+    assert succeeded == len(downloaded)
+    assert succeeded <= 2
 
 
 def test_prefetch_stars_picks_at_random_from_the_first_stars():
@@ -256,9 +256,11 @@ def test_prefetch_stars_picks_at_random_from_the_first_stars():
     first = submit.read_stars(limit=20)
     picked = prefetch_stars(6, 20, random.Random(1))
 
-    assert len(set(picked)) == 6 and set(picked) <= set(first)
-    assert picked == prefetch_stars(6, 20, random.Random(1)) != prefetch_stars(6, 20, random.Random(2))
-    assert sorted(prefetch_stars(50, 5)) == sorted(submit.read_stars(limit=5))  # can't pick more than there are
+    assert len(set(picked)) == 6
+    assert set(picked) <= set(first)
+    assert picked == prefetch_stars(6, 20, random.Random(1))
+    assert picked != prefetch_stars(6, 20, random.Random(2))
+    assert sorted(prefetch_stars(50, 5)) == sorted(submit.read_stars(limit=5))
 
 
 def test_two_workers_process_50_stars_through_the_coordinator():

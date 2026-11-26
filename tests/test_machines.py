@@ -144,7 +144,8 @@ def test_save_copies_the_log_and_writes_its_report(tmp_path, capsys):
     assert (saved / "run.jsonl").read_text() == path.read_text()
     text = (saved / "run.txt").read_text()
     assert text.startswith(f"{saved / 'run.jsonl'}\n")
-    assert "laptop" in text and "Apple M2" in text
+    assert "laptop" in text
+    assert "Apple M2" in text
 
 
 def test_two_machines_with_the_same_worker_id_get_a_warning(tmp_path, caplog):
