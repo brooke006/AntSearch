@@ -2,7 +2,7 @@
 
 Workers pull, so a scheduler never pushes a task anywhere. Each time a worker asks, the coordinator
 calls assign() and the scheduler answers "this task" or "not you" (None), and that worker asks again
-later. round-robin and random are baselines, greedy goes by speed alone, and ant is the
+later. first-come, round-robin and random are baselines, greedy goes by speed alone, and ant is the
 pheromone-based scheduler the project is about.
 """
 
@@ -27,6 +27,19 @@ class Scheduler:
         seconds how long the run took on the coordinator's clock, from assignment to result, and
         disputed whether the result failed to match the accepted answer (or no answer was agreed)."""
         raise NotImplementedError
+
+
+class FirstComeScheduler(Scheduler):
+    """Baseline: no scheduling. The task goes to whichever idle worker asks first, so nobody waits
+    for a chosen worker, and a worker that asks more often gets more."""
+
+    def assign(self, worker_id, tasks, workers):
+        if len(tasks) == 0 or worker_id not in workers:
+            return None
+        return tasks[0]
+
+    def on_result(self, worker_id, result, task_id=None, seconds=None, disputed=False):
+        pass
 
 
 class RoundRobinScheduler(Scheduler):
@@ -301,7 +314,7 @@ class AntScheduler(Scheduler):
         return outcome
 
 
-SCHEDULER_NAMES = ("round-robin", "random", "greedy", "ant")
+SCHEDULER_NAMES = ("first-come", "round-robin", "random", "greedy", "ant")
 
 
 def make_scheduler(
@@ -314,11 +327,13 @@ def make_scheduler(
     evaporation=DEFAULT_EVAPORATION,
     late_factor=DEFAULT_LATE_FACTOR,
 ):
-    """The scheduler the SCHEDULER setting names: round-robin, random, greedy or ant.
+    """The scheduler the SCHEDULER setting names: first-come, round-robin, random, greedy or ant.
 
     random and ant use seed. ant also needs pheromones (a PheromoneTable) and uses task_type_of,
     alpha, beta, evaporation and late_factor.
     """
+    if name == "first-come":
+        return FirstComeScheduler()
     if name == "round-robin":
         return RoundRobinScheduler()
     if name == "random":

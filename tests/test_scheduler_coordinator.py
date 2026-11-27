@@ -10,7 +10,7 @@ from redis.commands.core import ListCommands
 from antsearch import coordinator
 from antsearch.coordinator import PENDING_KEY, create_app
 from antsearch.pheromone import PheromoneTable
-from antsearch.scheduler import AntScheduler, GreedyScheduler, RandomScheduler, RoundRobinScheduler
+from antsearch.scheduler import AntScheduler, FirstComeScheduler, GreedyScheduler, RandomScheduler, RoundRobinScheduler
 from antsearch.worker import register, run_tasks, simulated_task
 
 
@@ -210,12 +210,13 @@ def test_greedy_ignores_a_garbage_result_without_failing_the_request():
 @pytest.mark.parametrize(
     "make",
     [
+        lambda database: FirstComeScheduler(),
         lambda database: RoundRobinScheduler(),
         lambda database: RandomScheduler(),
         lambda database: GreedyScheduler(),
         lambda database: AntScheduler(PheromoneTable(database), coordinator.task_type_lookup(database)),
     ],
-    ids=["round-robin", "random", "greedy", "ant"],
+    ids=["first-come", "round-robin", "random", "greedy", "ant"],
 )
 def test_two_worker_loops_finish_50_tasks(make):
     database = fakeredis.FakeRedis(decode_responses=True)

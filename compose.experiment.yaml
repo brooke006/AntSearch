@@ -1,0 +1,50 @@
+
+x-cache: &cache
+  volumes:
+    - ${LIGHTKURVE_CACHE:-${HOME}/.cache/lightkurve}:/home/antsearch/.cache/lightkurve:ro
+
+x-extra: &extra
+  <<: *cache
+  # The image compose.yaml's worker-1 builds, so these don't build 17 more.
+  image: ${COMPOSE_PROJECT_NAME:-antsearch-experiment}-worker-1
+  pull_policy: never
+  command: ["python", "-m", "antsearch.worker"]
+  profiles: [many]
+  stop_grace_period: 3m
+  depends_on:
+    coordinator:
+      condition: service_healthy
+
+x-env: &env
+  COORDINATOR_URL: http://coordinator:8000
+  WORKER_TASK: ${WORKER_TASK:-transit}
+  SIMULATED_TASK_SECONDS: ${SIMULATED_TASK_SECONDS:-1}
+  POLL_INTERVAL: ${POLL_INTERVAL:-2}
+
+x-slow-env: &slow-env
+  <<: *env
+  SLOWDOWN: 8
+
+services:
+  worker-1: *cache
+  worker-2: *cache
+  worker-3: *cache
+
+  fast-1: {<<: *extra, environment: {<<: *env, WORKER_ID: fast-1}}
+  fast-2: {<<: *extra, environment: {<<: *env, WORKER_ID: fast-2}}
+  fast-3: {<<: *extra, environment: {<<: *env, WORKER_ID: fast-3}}
+  fast-4: {<<: *extra, environment: {<<: *env, WORKER_ID: fast-4}}
+  fast-5: {<<: *extra, environment: {<<: *env, WORKER_ID: fast-5}}
+  fast-6: {<<: *extra, environment: {<<: *env, WORKER_ID: fast-6}}
+  fast-7: {<<: *extra, environment: {<<: *env, WORKER_ID: fast-7}}
+  fast-8: {<<: *extra, environment: {<<: *env, WORKER_ID: fast-8}}
+  fast-9: {<<: *extra, environment: {<<: *env, WORKER_ID: fast-9}}
+
+  slow-1: {<<: *extra, environment: {<<: *slow-env, WORKER_ID: slow-1}}
+  slow-2: {<<: *extra, environment: {<<: *slow-env, WORKER_ID: slow-2}}
+  slow-3: {<<: *extra, environment: {<<: *slow-env, WORKER_ID: slow-3}}
+  slow-4: {<<: *extra, environment: {<<: *slow-env, WORKER_ID: slow-4}}
+  slow-5: {<<: *extra, environment: {<<: *slow-env, WORKER_ID: slow-5}}
+  slow-6: {<<: *extra, environment: {<<: *slow-env, WORKER_ID: slow-6}}
+  slow-7: {<<: *extra, environment: {<<: *slow-env, WORKER_ID: slow-7}}
+  slow-8: {<<: *extra, environment: {<<: *slow-env, WORKER_ID: slow-8}}

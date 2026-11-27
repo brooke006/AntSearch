@@ -6,6 +6,7 @@ from collections import Counter
 import pytest
 
 from antsearch.scheduler import (
+    FirstComeScheduler,
     GreedyScheduler,
     RandomScheduler,
     RoundRobinScheduler,
@@ -367,7 +368,18 @@ def test_task_seconds_adds_download_and_compute():
     assert task_seconds({"compute_seconds": 0}) == 0
 
 
+def test_first_come_gives_the_front_task_to_whoever_asks():
+    scheduler = FirstComeScheduler()
+    workers = ["worker-1", "worker-2", "worker-3"]
+
+    assert scheduler.assign("worker-3", ["t1", "t2"], workers) == "t1"
+    assert scheduler.assign("worker-3", ["t2"], workers) == "t2"  # the same worker again, no turns
+    assert scheduler.assign("worker-1", [], workers) is None
+    assert scheduler.assign("worker-4", ["t3"], workers) is None  # busy, or has already run t3
+
+
 def test_make_scheduler():
+    assert isinstance(make_scheduler("first-come"), FirstComeScheduler)
     assert isinstance(make_scheduler("round-robin"), RoundRobinScheduler)
     assert isinstance(make_scheduler("greedy"), GreedyScheduler)
     assert choices(make_scheduler("random", seed=2), WORKERS, 20) == choices(RandomScheduler(seed=2), WORKERS, 20)
