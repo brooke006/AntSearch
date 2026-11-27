@@ -13,6 +13,7 @@ SLOW    ?= 0
 SLOW_FACTOR ?= 8
 SCENARIO ?=
 RUN     ?=
+RUNS	?=
 
 # Local IP for multi-machine workers
 HOST_IP  = $(shell ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | cut -d' ' -f1)
@@ -25,7 +26,7 @@ IT_COMPOSE := ANTSEARCH_PORT=$(IT_PORT) RUN_LOG_DIR=$(IT_RUNS) HEARTBEAT_TIMEOUT
 	POLL_INTERVAL=0.5 $(COMPOSE) -p antsearch-it
 
 .DEFAULT_GOAL := help
-.PHONY: help install build up coordinator worker machines down logs ps submit scenario metrics recall save-run sweep test test-unit test-science test-integration test-all coverage clean
+.PHONY: help install build up coordinator worker machines down logs ps submit scenario metrics recall save-run charts sweep test test-unit test-science test-integration test-all coverage clean
 
 help: ## Show this list
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  %-18s %s\n", $$1, $$2}'
@@ -130,6 +131,9 @@ recall: ## Planet recall of the newest run (or RUN=...)
 save-run: ## Copy the newest run log (or RUN=...) into docs/runs/, with its metrics and recall
 	$(PYTHON) -m antsearch.metrics --save docs/runs $(RUN)
 	$(PYTHON) -m antsearch.recall --save docs/runs $(RUN)
+
+charts: ## Use a string of comma-separated filepaths to run logs, then generate charts based on those logs
+	$(PYTHON) -m antsearch.charts $(RUNS)
 
 sweep: ## Simulate the ant scheduler over a grid of alpha, beta and evaporation; writes docs/parameter-sweep-*
 	$(PYTHON) -m antsearch.sweep
