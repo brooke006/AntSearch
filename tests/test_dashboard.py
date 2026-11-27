@@ -10,6 +10,7 @@ from antsearch.coordinator import (
 
 from antsearch.dashboard import (
     snapshot,
+    render,
 )
 
 from antsearch.pheromone import PheromoneTable
@@ -51,3 +52,22 @@ def test_snapshot_with_empty_redis(redis_client):
     assert snap["workers"] == {}
     assert snap["pending"] == []
     assert snap["pheromones"] == {}
+
+def test_render_shows_workers_levels_and_tasks():
+    # Set up: two workers(one busy, one idle), one pending taks, one pheromone level
+    snap = {"workers": {"worker-1": {"status": "online", "tasks": ["1", "3"]},
+                        "worker-2": {"status": "offline", "tasks": []},
+            },
+            "pending":["7"],
+            "pheromones": {"worker-1":{"short": 1.5}},
+        }
+
+    # Act
+    text = render(snap)
+
+    # Check
+    assert "worker-1" in text
+    assert "1.50" in text
+    assert "idle" in text
+    assert "Pending" in text
+
