@@ -38,6 +38,7 @@ def snapshot(redis_client: redis.Redis) -> dict:
 
     return{"workers": workers, "pending": pending, "pheromones": pheromones}
 
+
 def render(snap) -> str:
     """Turn a snapshot into the text shown on screen"""
     lines = []
@@ -76,3 +77,18 @@ def render(snap) -> str:
     return "\n".join(lines)
 
 
+def main() -> None:
+    """Connect to Redis and redraw the dashboard every few seconds until Ctrl+C"""
+    redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    client = redis.Redis.from_url(redis_url, decode_responses=True)
+    try:
+        while True:
+            snap = snapshot(client)
+            print("\033[2J\033[H", end="")
+            print(render(snap), flush=True)
+            time.sleep(REFRESH_SECONDS)
+    except KeyboardInterrupt:
+        print("Dashboard stopped.")
+
+if __name__ == "__main__":
+    main()
