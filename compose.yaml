@@ -60,6 +60,7 @@ services:
       WORKER_TASK: ${WORKER_TASK:-transit}
       SIMULATED_TASK_SECONDS: ${SIMULATED_TASK_SECONDS:-1}
       POLL_INTERVAL: ${POLL_INTERVAL:-2}
+      SLOWDOWN: ${WORKER_1_SLOWDOWN:-1}
 
   worker-2:
     <<: *worker
@@ -69,6 +70,7 @@ services:
       WORKER_TASK: ${WORKER_TASK:-transit}
       SIMULATED_TASK_SECONDS: ${SIMULATED_TASK_SECONDS:-1}
       POLL_INTERVAL: ${POLL_INTERVAL:-2}
+      SLOWDOWN: ${WORKER_2_SLOWDOWN:-1}
 
   worker-3:
     <<: *worker
@@ -78,3 +80,4 @@ services:
       WORKER_TASK: ${WORKER_TASK:-transit}
       SIMULATED_TASK_SECONDS: ${SIMULATED_TASK_SECONDS:-1}
       POLL_INTERVAL: ${POLL_INTERVAL:-2}
+      SLOWDOWN: ${WORKER_3_SLOWDOWN:-1}
