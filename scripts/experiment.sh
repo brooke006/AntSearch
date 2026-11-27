@@ -7,7 +7,9 @@ STARS=${STARS:-50}
 SCHEDULERS=${SCHEDULERS:-round-robin random greedy ant}
 export COMPOSE_PROJECT_NAME=antsearch-experiment
 export ANTSEARCH_PORT=8002
-export WORKER_TASK=${WORKER_TASK:-simulated}
+# The workers read this machine's light-curve cache (compose.experiment.yaml), so transit runs compute without downloading.
+export COMPOSE_FILE=compose.yaml:compose.experiment.yaml
+export WORKER_TASK=${WORKER_TASK:-transit}
 export SIMULATED_TASK_SECONDS=${SIMULATED_TASK_SECONDS:-2}
 
 trap 'docker compose down -v > /dev/null 2>&1' EXIT

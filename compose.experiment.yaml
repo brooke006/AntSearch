@@ -1,0 +1,11 @@
+# Used by scripts/experiment.sh on top of compose.yaml: the workers read this machine's light-curve
+# cache, so every run computes the same stars instead of downloading them. It's mounted read-only;
+# a star that isn't cached fails, since the worker can't save it.
+x-cache: &cache
+  volumes:
+    - ${LIGHTKURVE_CACHE:-${HOME}/.cache/lightkurve}:/home/antsearch/.cache/lightkurve:ro
+
+services:
+  worker-1: *cache
+  worker-2: *cache
+  worker-3: *cache
