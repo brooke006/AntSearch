@@ -2,5 +2,5 @@
 
 source "$(dirname "$0")/experiment.sh"
 
-export WORKER_2_SLOWDOWN=2 WORKER_3_SLOWDOWN=4
+export COMPOSE_PROFILES=many
 run_each uneven
