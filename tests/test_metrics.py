@@ -213,6 +213,41 @@ def test_report_shows_the_three_metrics():
     assert "wasted work:     15.0 s of 25.0 s worker time (60.0%)" in text
 
 
+def test_report_shows_each_workers_pheromone_from_the_last_task_done():
+    events = [
+        {"time": 0, "event": "coordinator_started", "scheduler": "ant", "seed": None, "heartbeat_timeout": 30},
+        queued(0, "t1"),
+        queued(0, "t2"),
+        assigned(1, "t1", "fast"),
+        {**done(2, "t1", "fast"), "pheromone": {"fast": "deposited"}, "levels": {"fast": {"short": 1.0}, "slow": {"short": 1.0}}},
+        assigned(2, "t2", "fast"),
+        {**done(3, "t2", "fast"), "pheromone": {"fast": "deposited"}, "levels": {"fast": {"short": 0.95}, "slow": {"short": 0.2}}},
+    ]
+
+    result = compute(events)
+    text = report(result)
+
+    assert {worker: counts["pheromone"] for worker, counts in result["workers"].items()} == {
+        "fast": {"short": 0.95}, "slow": {"short": 0.2},
+    }
+    header, fast, slow = text.splitlines()[-3:]
+    assert "pheromone  machine" in header
+    assert fast.split()[:7] == ["fast", "2", "0", "0", "0", "1.0", "s"]
+    assert "0.95" in fast
+    assert slow.split()[:6] == ["slow", "0", "0", "0", "0", "-"]
+    assert "0.20" in slow
+
+
+def test_report_has_a_pheromone_column_per_task_type_and_none_without_the_ant_scheduler():
+    levels = {"w1": {"short": 0.5, "multi_sector": 0.25}, "w2": {"short": 0.75}}
+    text = report(compute([queued(0, "t1"), {**done(1, "t1", "w1"), "pheromone": {"w1": "deposited"}, "levels": levels}]))
+    assert "pheromone short  pheromone multi_sector  machine" in text
+    assert "0.25" in text.splitlines()[-2]
+    assert text.splitlines()[-1].split()[-3:] == ["0.75", "-", "-"]
+
+    assert "pheromone" not in report(compute([queued(0, "t1"), assigned(0, "t1", "w1"), done(1, "t1", "w1")]))
+
+
 def test_report_warns_when_the_scheduler_changed_mid_run():
     text = report(compute([
         {"time": 0, "event": "coordinator_started", "scheduler": "greedy", "seed": None, "heartbeat_timeout": 30},

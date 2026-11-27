@@ -9,7 +9,12 @@ Environment:
     WORKER_TASK             transit (default) runs the TESS transit search; simulated just waits
                             SIMULATED_TASK_SECONDS (default 1) and returns a fake result, for
                             tests and experiments that shouldn't download from MAST
-    POLL_INTERVAL           seconds between task requests when the queue is empty (default 2)
+    SLOWDOWN                makes each task take this many times as long, to stand in for a slower
+                            machine (default 1)
+    PREFETCH                before registering, download this many stars, picked at random from the
+                            first PREFETCH_FROM (default 20) in the star list, so the transit search
+                            finds them cached (default 0)
+    POLL_INTERVAL          seconds between task requests when the queue is empty (default 2)
 """
 
 import functools
@@ -17,12 +22,14 @@ import importlib.metadata
 import logging
 import os
 import platform
+import random
 import signal
 import socket
 import subprocess
 import threading
 import time
 from collections.abc import Callable
+from concurrent.futures import Executor, ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +40,8 @@ log = logging.getLogger("antsearch.worker")
 
 DEFAULT_HEARTBEAT_TIMEOUT = 30.0  # seconds; the coordinator's answer to register overrides it
 DEFAULT_POLL_INTERVAL = 2.0  # seconds
+DEFAULT_PREFETCH_FROM = 20
+PREFETCH_PROCESSES = 3  # downloads mostly wait on MAST, so a few at once; each process takes ~200 MB
 
 Task = Callable[[str], dict[str, Any]]
 
@@ -223,15 +232,75 @@ def simulated_task(star_id: str, seconds: float) -> dict[str, Any]:
     return {"star_id": star_id, "simulated": True, "compute_seconds": seconds}
 
 
-def load_task(name: str, simulated_seconds: float = 1.0) -> Task:
-    """The task function WORKER_TASK names: transit or simulated."""
+def slowed_task(star_id: str, task: Task, factor: float) -> dict[str, Any]:
+    """Run task and scale reported timings by factor, sleeping to simulate a slower worker."""
+    start = time.monotonic()
+    result = dict(task(star_id))
+    time.sleep((factor - 1) * (time.monotonic() - start))
+    for key, value in result.items():
+        if key.endswith("_seconds") and isinstance(value, (int, float)):
+            result[key] = value * factor
+    return result
+
+
+def load_task(name: str, simulated_seconds: float = 1.0, slowdown: float = 1.0) -> Task:
+    """Return the task function for WORKER_TASK (transit or simulated)."""
+    if slowdown < 1:
+        raise ValueError(f"SLOWDOWN must be at least 1, not {slowdown}")
     if name == "transit":
         from antsearch.pipeline import run_task  # needs the science extra, so only imported here
 
-        return run_task
-    if name == "simulated":
-        return functools.partial(simulated_task, seconds=simulated_seconds)
-    raise ValueError(f"unknown WORKER_TASK {name!r}; use transit or simulated")
+        task = run_task
+    elif name == "simulated":
+        task = functools.partial(simulated_task, seconds=simulated_seconds)
+    else:
+        raise ValueError(f"unknown WORKER_TASK {name!r}; use transit or simulated")
+    if slowdown > 1:
+        task = functools.partial(slowed_task, task=task, factor=slowdown)
+    return task
+
+
+def _fetch(download: Callable[[str], Any], star_id: str) -> str | None:
+    """Download one star; returns the error as text, or None if it worked."""
+    try:
+        download(star_id)
+        return None
+    except Exception as exc:
+        return f"{type(exc).__name__}: {exc}"
+
+
+def prefetch(
+    star_ids: list[str],
+    download: Callable[[str], Any],
+    stop: threading.Event,
+    processes: int = PREFETCH_PROCESSES,
+    executor: type[Executor] = ProcessPoolExecutor,
+) -> int:
+    """Download star_ids into the cache, a few at a time, and return how many succeeded."""
+
+    succeeded = 0
+    with executor(processes) as pool:
+        futures = {pool.submit(_fetch, download, star_id): star_id for star_id in star_ids}
+        for future in as_completed(futures):
+            if future.cancelled():
+                continue
+            error = future.result()
+            if error:
+                log.warning("prefetching star %s failed: %s", futures[future], error)
+            else:
+                succeeded += 1
+            if stop.is_set():
+                for other in futures:
+                    other.cancel()
+    return succeeded
+
+
+def prefetch_stars(count: int, first: int, rng: random.Random | None = None) -> list[str]:
+    """count stars picked at random from the first `first` in the star list."""
+    from antsearch.submit import read_stars
+
+    stars = read_stars(limit=first)
+    return (rng or random).sample(stars, min(count, len(stars)))
 
 
 def main() -> None:
@@ -240,13 +309,27 @@ def main() -> None:
     coordinator_url = os.environ.get("COORDINATOR_URL", "http://localhost:8000")
     worker_id = os.environ.get("WORKER_ID") or socket.gethostname()
     poll_interval = float(os.environ.get("POLL_INTERVAL", DEFAULT_POLL_INTERVAL))
+    slowdown = float(os.environ.get("SLOWDOWN", 1.0))
     task = load_task(
-        os.environ.get("WORKER_TASK", "transit"), float(os.environ.get("SIMULATED_TASK_SECONDS", 1.0))
+        os.environ.get("WORKER_TASK", "transit"), float(os.environ.get("SIMULATED_TASK_SECONDS", 1.0)), slowdown
     )
+    if slowdown != 1:
+        log.info("worker %s slowed down %g times", worker_id, slowdown)
 
     stop = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
+
+    count = int(os.environ.get("PREFETCH", 0))
+    if count and os.environ.get("WORKER_TASK", "transit") != "transit":
+        log.info("worker %s skipping PREFETCH: simulated tasks don't download", worker_id)
+    elif count:
+        from antsearch.pipeline import download_light_curve
+
+        star_ids = prefetch_stars(count, int(os.environ.get("PREFETCH_FROM", DEFAULT_PREFETCH_FROM)))
+        log.info("worker %s prefetching %d stars: %s", worker_id, len(star_ids), ", ".join(star_ids))
+        done = prefetch(star_ids, download_light_curve, stop)
+        log.info("worker %s prefetched %d of %d stars", worker_id, done, len(star_ids))
 
     with httpx.Client(base_url=coordinator_url, timeout=5.0) as client:
         timeout = connect(client, worker_id, stop, poll_interval)

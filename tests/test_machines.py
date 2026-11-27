@@ -118,8 +118,8 @@ def test_metrics_break_the_run_down_by_worker_and_machine(tmp_path):
     result = compute(read_events(path))
 
     assert result["workers"] == {
-        "desktop": {"machine": None, "runs": 1, "failed": 0, "outvoted": 0, "lost": 0, "mean_answer_seconds": 4.0},
-        "laptop": {"machine": LAPTOP, "runs": 3, "failed": 1, "outvoted": 0, "lost": 0, "mean_answer_seconds": 20.0},
+        "desktop": {"machine": None, "runs": 1, "failed": 0, "outvoted": 0, "lost": 0, "mean_answer_seconds": 4.0, "pheromone": {}},
+        "laptop": {"machine": LAPTOP, "runs": 3, "failed": 1, "outvoted": 0, "lost": 0, "mean_answer_seconds": 20.0, "pheromone": {}},
     }
     lines = report(result).splitlines()
     assert lines[-3].split() == ["worker", "runs", "failed", "outvoted", "lost", "mean", "answer", "machine"]
@@ -144,7 +144,8 @@ def test_save_copies_the_log_and_writes_its_report(tmp_path, capsys):
     assert (saved / "run.jsonl").read_text() == path.read_text()
     text = (saved / "run.txt").read_text()
     assert text.startswith(f"{saved / 'run.jsonl'}\n")
-    assert "laptop" in text and "Apple M2" in text
+    assert "laptop" in text
+    assert "Apple M2" in text
 
 
 def test_two_machines_with_the_same_worker_id_get_a_warning(tmp_path, caplog):

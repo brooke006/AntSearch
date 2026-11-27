@@ -1,0 +1,39 @@
+{
+  // Tasks the debug configs in launch.json use. Run any of them from Terminal > Run Task.
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // preLaunchTask of the coordinator configs. The compose stack's Redis isn't published on
+      // the host, so the debugger gets its own container. It's kept between debug sessions, so a
+      // restarted coordinator carries on with the same run, until make down removes it.
+      "label": "Debug Redis: start",
+      "type": "shell",
+      "command": "docker start antsearch-debug-redis > /dev/null 2>&1 || docker run -d --name antsearch-debug-redis -p 6379:6379 redis:7-alpine > /dev/null && until docker exec antsearch-debug-redis redis-cli ping > /dev/null 2>&1; do sleep 0.2; done && if lsof -nP -iTCP:8000 -sTCP:LISTEN > /dev/null; then echo 'Port 8000 is taken: a coordinator is already running, in the debugger or from make up / make coordinator (make down stops those).'; exit 1; fi && echo 'debug Redis ready on localhost:6379'",
+      "problemMatcher": [],
+      "presentation": { "reveal": "silent", "panel": "shared" }
+    },
+    {
+      // Queued tasks, workers and pheromone levels otherwise carry over from the last session.
+      "label": "Debug Redis: clear",
+      "type": "shell",
+      "command": "docker exec antsearch-debug-redis redis-cli FLUSHALL",
+      "problemMatcher": []
+    },
+    {
+      // They join the coordinator through this machine's address and retry until it answers, so
+      // they can start before or after it. Stop them with make down.
+      "label": "Machines: start",
+      "type": "shell",
+      "command": "make machines ${input:machinesArgs}",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "machinesArgs",
+      "type": "promptString",
+      "description": "make machines arguments, e.g. PREFETCH=1 or WORKER_TASK=simulated (blank for none)",
+      "default": ""
+    }
+  ]
+}

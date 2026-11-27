@@ -110,7 +110,8 @@ def test_main_writes_the_table_and_the_runs(tmp_path, monkeypatch, capsys):
 
     results = (tmp_path / sweep.RESULTS_FILE).read_text()
     assert "python -m antsearch.sweep --seeds 2 --stars 10" in results
-    assert "| round-robin |" in results and "| greedy |" in results
+    assert "| round-robin |" in results
+    assert "| greedy |" in results
     with (tmp_path / sweep.RUNS_FILE).open() as f:
         rows = list(csv.DictReader(f))
     # (3 baselines + 2 ant settings) x 3 workloads x 1 load x 2 seeds

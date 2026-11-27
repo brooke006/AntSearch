@@ -1,9 +1,3 @@
-# Worker containers sized like four different computers, for rehearsing a multi-machine run on one host.
-# They join a coordinator started with `make coordinator` through its network address, like other
-# machines would. Start them with `make machines`. Their names start with your user name, so
-# teammates can run them against the same coordinator. With WORKER_TASK=simulated each one takes a
-# different time per star, since a real transit search mostly waits on downloads and barely notices
-# the CPU limit.
 
 x-machine: &machine
   build: .
@@ -15,44 +9,61 @@ x-env: &env
   COORDINATOR_URL: ${COORDINATOR_URL:-http://host.docker.internal:8000}
   WORKER_TASK: ${WORKER_TASK:-transit}
   POLL_INTERVAL: ${POLL_INTERVAL:-2}
+  PREFETCH_FROM: ${PREFETCH_FROM:-20}
 
 services:
   desktop:
     <<: *machine
-    hostname: ${USER:-local}-desktop
+    hostname: ${MACHINE_PREFIX:-${USER:-local}}-desktop
     cpus: 4
     mem_limit: 4g
     environment:
       <<: *env
-      WORKER_ID: ${USER:-local}-desktop
+      WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-desktop${DESKTOP_PREFETCH:+-cached${DESKTOP_PREFETCH}}
+      PREFETCH: ${DESKTOP_PREFETCH:-0}
       SIMULATED_TASK_SECONDS: 0.5
 
   laptop:
     <<: *machine
-    hostname: ${USER:-local}-laptop
+    hostname: ${MACHINE_PREFIX:-${USER:-local}}-laptop
     cpus: 2
     mem_limit: 2g
     environment:
       <<: *env
-      WORKER_ID: ${USER:-local}-laptop
+      WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-laptop${LAPTOP_PREFETCH:+-cached${LAPTOP_PREFETCH}}
+      PREFETCH: ${LAPTOP_PREFETCH:-0}
       SIMULATED_TASK_SECONDS: 1
 
   old-laptop:
     <<: *machine
-    hostname: ${USER:-local}-old-laptop
+    hostname: ${MACHINE_PREFIX:-${USER:-local}}-old-laptop
     cpus: 1
     mem_limit: 1.5g
     environment:
       <<: *env
-      WORKER_ID: ${USER:-local}-old-laptop
+      WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-old-laptop${OLD_LAPTOP_PREFETCH:+-cached${OLD_LAPTOP_PREFETCH}}
+      PREFETCH: ${OLD_LAPTOP_PREFETCH:-0}
       SIMULATED_TASK_SECONDS: 2
 
   netbook:
     <<: *machine
-    hostname: ${USER:-local}-netbook
+    hostname: ${MACHINE_PREFIX:-${USER:-local}}-netbook
     cpus: 0.5
     mem_limit: 1g
     environment:
       <<: *env
-      WORKER_ID: ${USER:-local}-netbook
+      WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-netbook${NETBOOK_PREFETCH:+-cached${NETBOOK_PREFETCH}}
+      PREFETCH: ${NETBOOK_PREFETCH:-0}
       SIMULATED_TASK_SECONDS: 4
+
+  potato:
+    <<: *machine
+    hostname: ${MACHINE_PREFIX:-${USER:-local}}-potato
+    cpus: 0.25
+    mem_limit: 1g
+    environment:
+      <<: *env
+      WORKER_ID: ${MACHINE_PREFIX:-${USER:-local}}-potato${POTATO_PREFETCH:+-cached${POTATO_PREFETCH}}
+      PREFETCH: ${POTATO_PREFETCH:-0}
+      SIMULATED_TASK_SECONDS: 2
+      SLOWDOWN: 4

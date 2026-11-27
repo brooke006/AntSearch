@@ -15,11 +15,21 @@ def test_tiny_rounding_differences_are_allowed():
     assert matches(RESULT, {**RESULT, "depth": RESULT["depth"] * (1 + 1e-9)})
 
 
+def test_a_mac_and_a_linux_container_agree_on_the_same_star():
+    # TOI-102 from the same cached file, on macOS (numpy with Accelerate) and in the Docker image.
+    mac = {"star_id": "TOI-102", "sector": 1, "period": 4.413048825974573, "t0": 1326.07557805538, "duration": 0.12,
+           "depth": 0.013100431396754366, "power": 0.2829348858266935, "snr": 317.0315950383398}
+    linux = {**mac, "depth": 0.013100398384742126, "power": 0.2829341728539958, "snr": 317.0790039945993}
+
+    assert matches(mac, linux)
+    assert not matches(mac, linux, tolerance=1e-6)  # the old tolerance sent every such star to a third run
+
+
 @pytest.mark.parametrize(
     "other",
     [
         {**RESULT, "period": 2.2059},
-        {**RESULT, "depth": RESULT["depth"] * 1.001},
+        {**RESULT, "depth": RESULT["depth"] * 1.05},
         {**RESULT, "sector": 2},
         {**RESULT, "star_id": "TOI-103"},
         {key: value for key, value in RESULT.items() if key != "power"},

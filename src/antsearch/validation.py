@@ -10,7 +10,8 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
-TOLERANCE = 1e-6  # relative difference allowed between two numbers that should be the same
+# Relative difference allowed between two numbers that should be the same.
+TOLERANCE = 1e-2
 
 
 def _same(a: Any, b: Any, tolerance: float) -> bool:

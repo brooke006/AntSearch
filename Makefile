@@ -1,21 +1,20 @@
-# Common tasks. Run `make` or `make help` for the list.
-
 PYTHON  ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 COMPOSE ?= docker compose
 IMAGE   ?= antsearch:dev
 PYTEST  := $(PYTHON) -m pytest
 
 STARS   ?= 50
+COPIES  ?= 1
+PREFETCH ?=
+PREFETCH_COUNTS ?= 0 15 30 50 100
 SCENARIO ?=
 RUN     ?=
 
-# This machine's address on the local network, which workers on other machines connect to.
+# Local IP for multi-machine workers
 HOST_IP  = $(shell ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | cut -d' ' -f1)
-MACHINES := $(COMPOSE) -p antsearch-machines -f compose.machines.yaml
+MACHINES := $(COMPOSE) -f compose.machines.yaml
 
-# Integration tests get their own compose project, port and a short heartbeat timeout,
-# so they never touch a dev stack started with `make up`. Their workers run simulated tasks
-# instead of downloading from MAST.
+# Isolated compose stack for integration tests
 IT_PORT    ?= 8001
 IT_RUNS    := ./output/runs-it
 IT_COMPOSE := ANTSEARCH_PORT=$(IT_PORT) RUN_LOG_DIR=$(IT_RUNS) HEARTBEAT_TIMEOUT=3 WORKER_TASK=simulated SIMULATED_TASK_SECONDS=0.2 \
@@ -50,12 +49,34 @@ worker: ## Run a worker here: make worker COORDINATOR_URL=http://<address>:8000 
 		{ echo "usage: make worker COORDINATOR_URL=http://<address>:8000 WORKER_ID=<a name no other machine uses>"; exit 2; }
 	COORDINATOR_URL=$(COORDINATOR_URL) WORKER_ID=$(WORKER_ID) $(PYTHON) -m antsearch.worker
 
-machines: ## Start four worker containers with different CPU and memory limits that join `make coordinator`
-	COORDINATOR_URL=$${COORDINATOR_URL:-http://$(HOST_IP):$${ANTSEARCH_PORT:-8000}} $(MACHINES) up --build -d
+machines: ## Start worker containers with different CPU/memory limits (COPIES=N; PREFETCH=1 caches random stars on each)
+	@for n in $$(seq 1 $(COPIES)); do \
+		if [ $$n -eq 1 ]; then \
+			project=antsearch-machines; \
+			prefix=$${MACHINE_PREFIX:-$${USER:-local}}; \
+			build="--build"; \
+		else \
+			project=antsearch-machines-$$n; \
+			prefix=$${MACHINE_PREFIX:-$${USER:-local}}$$n; \
+			build=""; \
+		fi; \
+		echo "starting $$project"; \
+		counts=$$([ -z "$(PREFETCH)" ] || $(PYTHON) -c 'import random, sys; c = sys.argv[1:]; random.shuffle(c); print(*c)' $(PREFETCH_COUNTS)); \
+		set -- $$counts; \
+		[ -z "$$counts" ] || echo "  cached stars: desktop $$1, laptop $$2, old-laptop $$3, netbook $$4, potato $$5"; \
+		DESKTOP_PREFETCH=$$1 LAPTOP_PREFETCH=$$2 OLD_LAPTOP_PREFETCH=$$3 NETBOOK_PREFETCH=$$4 POTATO_PREFETCH=$$5 \
+		MACHINE_PREFIX=$$prefix \
+		COORDINATOR_URL=$${COORDINATOR_URL:-http://$(HOST_IP):$${ANTSEARCH_PORT:-8000}} \
+			$(MACHINES) -p $$project up -d $$build || exit 1; \
+	done
 
-down: ## Stop the stack started by `make up` or `make coordinator`, and any `make machines` workers
-	$(MACHINES) down
+down: ## Stop the compose stack, all worker machines and the VS Code debug Redis
+	@for project in $$($(COMPOSE) ls --all --quiet --filter name=antsearch-machines); do \
+		echo "stopping $$project"; $(MACHINES) -p $$project down; \
+	done
 	$(COMPOSE) down
+	@# Started by the coordinator debug configs (.vscode/tasks.json); the next debug launch makes a fresh one.
+	@! docker inspect antsearch-debug-redis > /dev/null 2>&1 || { docker rm -f antsearch-debug-redis > /dev/null && echo "removed antsearch-debug-redis"; }
 
 logs: ## Follow the stack's logs
 	$(COMPOSE) logs -f

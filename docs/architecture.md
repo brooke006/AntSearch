@@ -149,7 +149,7 @@ flowchart TB
         c2 --- n1["make worker<br/>teammate laptop"]
         c2 --- n2["make worker<br/>another laptop"]
         c2 --- d1["docker run antsearch:dev<br/>spare PC"]
-        c2 --- m1["make machines<br/>4 sized containers"]
+        c2 --- m1["make machines<br/>5 sized containers"]
     end
 ```
 
@@ -172,6 +172,6 @@ flowchart TB
 | `src/antsearch/datasets/tess_data_mixed.csv` | The 200-star list: 100 confirmed planets, 100 false positives | | Read by submit, recall and sweep | |
 | `src/antsearch/datasets/reconstruct_tess_data_mixed.py` | Rebuilds the star list | NASA Exoplanet Archive TOI table, MAST sector counts | The star list CSV | `python` by hand |
 | `compose.yaml` | Redis, the coordinator and three workers on one machine | Settings from the environment | Containers on port 8000 | `make up` |
-| `compose.machines.yaml` | Four worker containers with different CPU and memory limits | `COORDINATOR_URL` | Containers that join a coordinator | `make machines` |
+| `compose.machines.yaml` | Five worker containers with different CPU and memory limits | `COORDINATOR_URL` | Containers that join a coordinator | `make machines` |
 | `Dockerfile` | One image for the coordinator and workers, with the science libraries and `tc` | | `antsearch:dev` | `make build` |
 | `Makefile` | Shortcuts for everything above | | | `make help` |
