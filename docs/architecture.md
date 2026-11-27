@@ -19,7 +19,7 @@ flowchart LR
 
     subgraph coordhost["Coordinator machine"]
         coordinator["coordinator.py<br/>FastAPI: workers, heartbeats,<br/>task queue, results"]
-        scheduler["scheduler.py<br/>round-robin, random, greedy, ant"]
+        scheduler["scheduler.py<br/>first-come, round-robin, random, greedy, ant"]
         pheromone["pheromone.py<br/>pheromone level per worker and task type"]
         validation["validation.py<br/>compare replicated results, settle a task"]
         runlog["runlog.py<br/>one JSON line per event"]
@@ -158,7 +158,7 @@ flowchart TB
 | File | What it does | Inputs | Outputs | Run with |
 |---|---|---|---|---|
 | `src/antsearch/coordinator.py` | HTTP API for workers and clients; keeps all state in Redis; assigns tasks through the scheduler; settles replicated results | HTTP requests, settings from the environment, Redis | HTTP responses, Redis state, run log events | `make up`, `make coordinator` |
-| `src/antsearch/scheduler.py` | Picks a task for a worker that asks: round-robin, random, greedy or ant (pheromone and recent speed) | Queued tasks, workers, pheromone levels | The chosen task; pheromone updates on each result | via the coordinator |
+| `src/antsearch/scheduler.py` | Picks a task for a worker that asks: first-come, round-robin, random, greedy or ant (pheromone and recent speed) | Queued tasks, workers, pheromone levels | The chosen task; pheromone updates on each result | via the coordinator |
 | `src/antsearch/pheromone.py` | Pheromone level per worker and task type (short or multi-sector), with evaporation and bounds | Deposits and penalties from the scheduler | Levels stored in Redis | via the scheduler |
 | `src/antsearch/validation.py` | Compares results from different workers (ignoring timings, allowing rounding) and decides accept, wait, rerun or unresolved | Results of a task's runs | A decision | via the coordinator |
 | `src/antsearch/runlog.py` | Appends one JSON line per event; reads logs back | Events from the coordinator | `output/runs/<run>.jsonl` | via the coordinator |

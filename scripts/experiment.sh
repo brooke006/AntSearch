@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 
 PYTHON=$([ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
 STARS=${STARS:-50}
-SCHEDULERS=${SCHEDULERS:-round-robin random greedy ant}
+SCHEDULERS=${SCHEDULERS:-first-come round-robin random greedy ant}
 export COMPOSE_PROJECT_NAME=antsearch-experiment
 export ANTSEARCH_PORT=8002
 # The workers read this machine's light-curve cache (compose.experiment.yaml), so transit runs compute without downloading.

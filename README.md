@@ -277,12 +277,13 @@ Set `SCHEDULER` to choose one, for example `SCHEDULER=greedy make up`:
 
 | `SCHEDULER` | Each task goes to |
 |---|---|
+| `first-come` | Whichever available worker asks first: no scheduling, and nobody waits for a chosen worker |
 | `round-robin` (default) | The next available worker in worker-ID order |
 | `random` | An available worker chosen uniformly at random. Set `SCHEDULER_SEED` to an integer to repeat the same sequence of choices |
 | `greedy` | The available worker with the shortest estimated task time |
 | `ant` | An available worker chosen at random, weighted by its pheromone for the task's type and its recent speed (Ant System). `SCHEDULER_ALPHA` and `SCHEDULER_BETA` set the weights, `SCHEDULER_EVAPORATION` and `SCHEDULER_LATE_FACTOR` how the pheromone is updated; `SCHEDULER_SEED` works as for `random` |
 
-"Available" means online with no running task, so a slower worker still gets work while a faster one is busy. All of them make a worker that isn't chosen wait: it gets 204 and asks again after its polling interval.
+"Available" means online with no running task, so a slower worker still gets work while a faster one is busy. All but `first-come` make a worker that isn't chosen wait: it gets 204 and asks again after its polling interval.
 
 The greedy estimate is a moving average of `download_seconds + compute_seconds` from a worker's results. Workers with no result yet go first, so each one gets measured, and workers whose results have all failed go last. Simulated tasks all report the same `compute_seconds`, so greedy sees no difference between simulated workers and always prefers the lowest worker ID.
 
