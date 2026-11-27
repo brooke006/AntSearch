@@ -7,6 +7,10 @@ STARS   ?= 50
 COPIES  ?= 1
 PREFETCH ?=
 PREFETCH_COUNTS ?= 0 15 30 50 100
+# make machines WORKERS=N instead starts N plain workers, SLOW of them SLOW_FACTOR times slower
+WORKERS ?=
+SLOW    ?= 0
+SLOW_FACTOR ?= 8
 SCENARIO ?=
 RUN     ?=
 
@@ -49,7 +53,30 @@ worker: ## Run a worker here: make worker COORDINATOR_URL=http://<address>:8000 
 		{ echo "usage: make worker COORDINATOR_URL=http://<address>:8000 WORKER_ID=<a name no other machine uses>"; exit 2; }
 	COORDINATOR_URL=$(COORDINATOR_URL) WORKER_ID=$(WORKER_ID) $(PYTHON) -m antsearch.worker
 
-machines: ## Start worker containers with different CPU/memory limits (COPIES=N; PREFETCH=1 caches random stars on each)
+machines: ## Start worker containers with different CPU/memory limits (COPIES=N, PREFETCH=1), or WORKERS=N SLOW=M plain ones
+
+ifdef WORKERS
+# Named fast and slow worker containers sharing this machine's light-curve cache, e.g. to join
+# someone else's experiment: make machines WORKERS=20 SLOW=8 COORDINATOR_URL=http://<their address>:8002
+machines:
+	@test "$(SLOW)" -le "$(WORKERS)" || { echo "SLOW ($(SLOW)) can't be more than WORKERS ($(WORKERS))"; exit 2; }
+	docker build -q -t $(IMAGE) . > /dev/null
+	@mkdir -p $$HOME/.cache/lightkurve
+	@prefix=$${MACHINE_PREFIX:-$${USER:-local}}; \
+	url=$${COORDINATOR_URL:-http://$(HOST_IP):$${ANTSEARCH_PORT:-8000}}; \
+	echo "joining $$url"; \
+	start() { \
+		docker rm -f $$1 > /dev/null 2>&1; \
+		docker run -d --name $$1 --label antsearch.machines \
+			-e COORDINATOR_URL=$$url -e WORKER_ID=$$1 -e SLOWDOWN=$$2 \
+			-e WORKER_TASK=$${WORKER_TASK:-transit} -e POLL_INTERVAL=$${POLL_INTERVAL:-0.5} \
+			-v $$HOME/.cache/lightkurve:/home/antsearch/.cache/lightkurve \
+			$(IMAGE) > /dev/null && echo "  started $$1"; \
+	}; \
+	for i in $$(seq 1 $$(($(WORKERS) - $(SLOW)))); do start $$prefix-fast-$$i 1 || exit 1; done; \
+	for i in $$(seq 1 $(SLOW)); do start $$prefix-slow-$$i $(SLOW_FACTOR) || exit 1; done
+else
+machines:
 	@for n in $$(seq 1 $(COPIES)); do \
 		if [ $$n -eq 1 ]; then \
 			project=antsearch-machines; \
@@ -69,11 +96,14 @@ machines: ## Start worker containers with different CPU/memory limits (COPIES=N;
 		COORDINATOR_URL=$${COORDINATOR_URL:-http://$(HOST_IP):$${ANTSEARCH_PORT:-8000}} \
 			$(MACHINES) -p $$project up -d $$build || exit 1; \
 	done
+endif
 
 down: ## Stop the compose stack, all worker machines and the VS Code debug Redis
 	@for project in $$($(COMPOSE) ls --all --quiet --filter name=antsearch-machines); do \
 		echo "stopping $$project"; $(MACHINES) -p $$project down; \
 	done
+	@ids=$$(docker ps -aq --filter label=antsearch.machines); \
+	[ -z "$$ids" ] || { docker rm -f $$ids > /dev/null && echo "removed $$(echo $$ids | wc -w | tr -d ' ') WORKERS= containers"; }
 	$(COMPOSE) down
 	@# Started by the coordinator debug configs (.vscode/tasks.json); the next debug launch makes a fresh one.
 	@! docker inspect antsearch-debug-redis > /dev/null 2>&1 || { docker rm -f antsearch-debug-redis > /dev/null && echo "removed antsearch-debug-redis"; }

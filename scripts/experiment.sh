@@ -19,7 +19,7 @@ trap 'stop > /dev/null 2>&1' EXIT
 
 wait_for_workers() {
 	local expected
-	expected=$(docker compose ps --services | grep -cv -e '^coordinator$' -e '^redis$')
+	expected=$(($(docker compose ps --services | grep -cv -e '^coordinator$' -e '^redis$') + ${EXTRA_WORKERS:-0}))
 	until [ "$(curl -s "localhost:$ANTSEARCH_PORT/workers" | grep -o '"status":"online"' | wc -l)" -ge "$expected" ]; do
 		sleep 1
 	done
