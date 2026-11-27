@@ -11,6 +11,8 @@ export ANTSEARCH_PORT=8002
 export COMPOSE_FILE=compose.yaml:compose.experiment.yaml
 export WORKER_TASK=${WORKER_TASK:-transit}
 export SIMULATED_TASK_SECONDS=${SIMULATED_TASK_SECONDS:-2}
+# Idle workers ask this often; a task waits for the worker the scheduler picked to ask.
+export POLL_INTERVAL=${POLL_INTERVAL:-0.5}
 
 stop() { docker compose --profile many down -v "$@"; }
 trap 'stop > /dev/null 2>&1' EXIT
