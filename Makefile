@@ -60,7 +60,7 @@ ifdef WORKERS
 # someone else's experiment: make machines WORKERS=20 SLOW=8 COORDINATOR_URL=http://<their address>:8002
 machines:
 	@test "$(SLOW)" -le "$(WORKERS)" || { echo "SLOW ($(SLOW)) can't be more than WORKERS ($(WORKERS))"; exit 2; }
-	docker build -q -t $(IMAGE) . > /dev/null
+	docker build -t $(IMAGE) .
 	@mkdir -p $$HOME/.cache/lightkurve
 	@prefix=$${MACHINE_PREFIX:-$${USER:-local}}; \
 	url=$${COORDINATOR_URL:-http://$(HOST_IP):$${ANTSEARCH_PORT:-8000}}; \
