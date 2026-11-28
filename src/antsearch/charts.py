@@ -38,19 +38,28 @@ def create_charts(runs_to_compare: list[str]):
         {"metric_type": "throughput_per_minute", "title": "Scheduler Throughput", "label": "Throughput (Succeeded Tasks Per Minute)"},
         {"metric_type": "wasted_fraction", "title": "Scheduler Wasted Work", "label": "Wasted Work (Percentage of Worker Processing Time)"}]
 
+    colors_for_schedulers = {"first-come": "#F85555", "round-robin": "#F8F855", "random": "#55F855", "greedy": "#55F8F8", "ant": "#5555F8"}
+
     for current_metric in metrics_to_graph:
         schedulers = []
+        colors = []
         values = []
         for computed_log in computed_log_data:
-            schedulers.append("\n".join(computed_log["schedulers"]) or "unknown")
+            current_log_scheduler = "\n".join(computed_log["schedulers"]) or "unknown"
+            schedulers.append(current_log_scheduler)
+            try:
+                colors.append(colors_for_schedulers[current_log_scheduler])
+            except KeyError:
+                colors.append("#AAAAAA")
             values.append(computed_log[current_metric["metric_type"]])
 
-        plt.bar(schedulers, values, color="red", width=0.5)
+        plt.bar(schedulers, values, color = colors, width = 0.5)
         plt.title(current_metric["title"])
         plt.xlabel("Scheduler")
         plt.ylabel(current_metric["label"])
 
         plt.savefig(f"docs/figures/{current_metric["metric_type"]}.png", dpi = 300, bbox_inches = "tight")
+        plt.clf()
 
 
 def main(argv: list[str] | None = None) -> int:
