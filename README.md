@@ -4,7 +4,7 @@
 
 A Python volunteer-computing system for exoplanet searches using ant-inspired task scheduling.
 
-See [docs/architecture.md](docs/architecture.md) for diagrams of the components, which file does what, and the system's inputs and outputs.
+See [docs/architecture.md](docs/architecture.md) for a short overview of the system with diagrams.
 
 ## Setup
 
