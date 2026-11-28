@@ -4,7 +4,7 @@
 
 A Python volunteer-computing system for exoplanet searches using ant-inspired task scheduling.
 
-See [docs/architecture.md](docs/architecture.md) for diagrams of the components, which file does what, and the system's inputs and outputs.
+See [docs/architecture.md](docs/architecture.md) for a short overview of the system with diagrams.
 
 ## Setup
 
@@ -41,6 +41,7 @@ The [Makefile](Makefile) wraps the common commands. Run `make` on its own to lis
 | `make metrics` | Completion time, throughput and wasted work of the newest run (`RUN=output/runs/<run>.jsonl` for another); see [Run logs and metrics](#run-logs-and-metrics) |
 | `make recall` | Share of known planets the newest run (or `RUN=...`) found again, and strong signals on stars with no known planet; see [Planet recall](#planet-recall) |
 | `make save-run` | Copy the newest run log (or `RUN=...`) into `docs/runs/`, with its metrics and recall next to it |
+| `make charts` | Use a string of comma-separated filepaths to run logs (using `RUNS=...`), then generate charts based on those logs |
 | `make sweep` | Simulate the ant scheduler over a grid of alpha, beta and evaporation (about 11 minutes on 10 cores); see [docs/parameter-sweep.md](docs/parameter-sweep.md) |
 | `make test` | Unit and science tests (everything that doesn't need Docker) |
 | `make test-unit` | Fast tests only: coordinator, replication, worker, submit, scenarios, run logs, pheromone table, package |
