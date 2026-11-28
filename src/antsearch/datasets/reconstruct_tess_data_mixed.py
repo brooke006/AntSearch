@@ -6,16 +6,19 @@ tap_url = "https://exoplanetarchive.ipac.caltech.edu/TAP/sync?query=select+toipf
 
 raw_csv = pd.read_csv(tap_url)
 
-# Only keep confirmed and known planets, and false positives and alerts, everything else is is not confirmed. Split into two separate dataframes to maintain a 50/50 ratio.
+# Only keep confirmed and known planets, and false positives and alerts, everything else is is not confirmed. If a star has a confirmed or known planet, and has a
+# false positive/alert, only keep the record of the confirmed/known planet. Strip duplicate star entries, and split into two separate dataframes to maintain a 50/50 ratio.
+raw_csv_true = raw_csv[(raw_csv["tfopwg_disp"] == "CP") | (raw_csv["tfopwg_disp"] == "KP")]
+raw_csv_true = raw_csv_true.drop_duplicates(subset = ["toipfx"])
+
 raw_csv_false = raw_csv[(raw_csv["tfopwg_disp"] == "FA") | (raw_csv["tfopwg_disp"] == "FP")]
 raw_csv_false = raw_csv_false.drop_duplicates(subset = ["toipfx"])
+raw_csv_false = raw_csv_false[~raw_csv_false["toipfx"].isin(raw_csv_true["toipfx"])]
+
+raw_csv_true = raw_csv_true.head(100)
 raw_csv_false = raw_csv_false.head(100)
 
-raw_csv = raw_csv[(raw_csv["tfopwg_disp"] == "CP") | (raw_csv["tfopwg_disp"] == "KP")]
-raw_csv = raw_csv.drop_duplicates(subset = ["toipfx"])
-raw_csv = raw_csv.head(100)
-
-raw_csv = pd.concat([raw_csv, raw_csv_false], ignore_index = True)
+raw_csv = pd.concat([raw_csv_true, raw_csv_false], ignore_index = True)
 
 pd.set_option("display.min_rows", 20)
 print(raw_csv)
